@@ -1,40 +1,54 @@
-import csv
-import time
-import datetime
 import requests
 from bs4 import BeautifulSoup
-list_of_rows = []
-# for the current year, use disciplinary
-# for any previous year, use disciplinary_{year}
-    url = 'https://ota.dc.gov/page/scheduled-evictions'
+import os
+import tabula
+import pandas as pd
 
-    response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'})
-    html = response.content
-    soup = BeautifulSoup(html, features="html.parser")
-    table = soup.find('div class="field-items"')
-        for row in table.find_all('a'):
-            list_of_cells = []
-            for cell in row.find_all('td'):
-                if cell.find('a'):
-                    list_of_cells.append("https://www.mbp.state.md.us" + cell.find('a')['href'])
-                text = cell.text.strip()
-                list_of_cells.append(text)
-            list_of_cells.append(year)
-            list_of_rows.append(list_of_cells)
-    else:
-        for row in table.find_all('tr'):
-            list_of_cells = []
-            for cell in row.find_all('td'):
-                if cell.find('a'):
-                    link = "https://www.mbp.state.md.us" + cell.find('a')['href']
-                    type, name = cell.text.rsplit(' - ', 1)
-                    list_of_cells = [link, name, type]
-                else:
-                    list_of_cells.append(cell.text)
-                    list_of_cells.append(year)
-            list_of_rows.append(list_of_cells)
-outfile = open("alerts.csv", "w")
-writer = csv.writer(outfile)
-# i am writing a header row
-writer.writerow(["url", "name", "type", "date","year"])
-writer.writerows(list_of_rows)
+# Step 1: Scrape the website and extract PDF URLs
+url = "https://ota.dc.gov/page/scheduled-evictions"
+response = requests.get(url)
+pdf_urls = [a["href"] for a in BeautifulSoup(response.text, "html.parser").find_all("a", href=True) if a["href"].endswith(".pdf")]
+
+# Step 2: Download PDF files
+pdf_directory = "pdf_files"
+os.makedirs(pdf_directory, exist_ok=True)
+[open(os.path.join(pdf_directory, pdf_url.split("/")[-1]), "wb").write(requests.get(pdf_url).content) for pdf_url in pdf_urls]
+
+# Step 3: Extract tables from PDF and save as CSVs, ensuring unique rows
+csv_directory = "csv_files"
+os.makedirs(csv_directory, exist_ok=True)
+
+header = None  # Initialize header to None
+unique_rows = set()  # Set to keep track of unique rows
+
+for pdf_filename in os.listdir(pdf_directory):
+    pdf_tables = tabula.io.read_pdf(os.path.join(pdf_directory, pdf_filename), pages='all', multiple_tables=True)
+    if pdf_tables:  # Check if tables exist in the PDF
+        first_table = pdf_tables[0]  # Get the first table from the PDF
+        header = list(first_table.columns)  # Extract the header row from the first table
+        # Flatten and convert all tables to tuples of rows
+        all_table_rows = [tuple(row) for table in pdf_tables for row in table.values]
+        unique_rows.update(all_table_rows)  # Add unique rows to the set
+
+        # Save each table as a CSV
+        for i, table in enumerate(pdf_tables):
+            csv_filename = f"{pdf_filename[:-4]}_table_{i+1}.csv"
+            csv_path = os.path.join(csv_directory, csv_filename)
+            table.to_csv(csv_path, index=False)
+
+# Step 4: Create DataFrame with unique rows and add a header row
+final_df = pd.DataFrame(unique_rows, columns=header)
+
+# Remove columns with all NaN values
+final_df = final_df.dropna(axis=1, how='all')
+
+# Drop duplicate rows based on all columns
+final_df = final_df.drop_duplicates()
+
+# Convert the 'Eviction Date' column to datetime format
+final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce')
+
+# Sort the DataFrame by 'Eviction Date' and then by 'Case Number'
+final_df = final_df.sort_values(by=['Eviction Date', 'Case Number'])
+
+final_df.to_csv("eviction_notices.csv", index=False)
