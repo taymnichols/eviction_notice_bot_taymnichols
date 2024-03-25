@@ -1,21 +1,18 @@
 name: Scrape
-#this job will run when we push to the repo (that's what on push means)
+
 on:
   push:
     branches:
       - '*'
-#set it to run on a schedule - this sets it to run at 11pm gmt which is like 6 our time
   schedule:
-  - cron: "0 23 * * *"
-#jobs are setting up all the things we need to do to run this
-#operating system (ubuntu linux is what codespace is running on)
-#check out a repository, set up python, 3.x means anything in python 3
-#isntall dependencies - same thing we did in codespace, installs stuff we need
+    - cron: "0 23 * * *"  # Runs every day at 6 PM EST
+
 jobs:
   scheduled:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v2
@@ -24,17 +21,15 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests bs4 os tabula pandas
-#command to run scraper
-      - name: run scraper
+
+      - name: Run scraper
         run: python scraper/scrape.py
-#git user is automated, could do cool name like docbot, 
-#don't send me an email, git add -a means if anything changed add it
-#adds latest time stamp
-      - name: "Commit and push if it changed"
+
+      - name: Commit and push if changed
         run: |-
-            git config user.name "eviction_notice_bot"
-            git config user.email "actions@users.noreply.github.com"
-            git add -A
-            timestamp=$(date -u)
-            git commit -m "new scheduled evictions data available: ${timestamp}" || exit 0
-            git push
+          git config --global user.name "eviction_notice_bot"
+          git config --global user.email "actions@users.noreply.github.com"
+          git add -A
+          timestamp=$(date -u)
+          git commit -m "New scheduled evictions data available: ${timestamp}" || exit 0
+          git push
