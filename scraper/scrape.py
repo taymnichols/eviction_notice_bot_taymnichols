@@ -9,10 +9,14 @@ url = "https://ota.dc.gov/page/scheduled-evictions"
 response = requests.get(url)
 pdf_urls = [a["href"] for a in BeautifulSoup(response.text, "html.parser").find_all("a", href=True) if a["href"].endswith(".pdf")]
 
-# Step 2: Download PDF files
+# Step 2: Download PDF files if they are not already present in the pdf_files directory
 pdf_directory = "pdf_files"
 os.makedirs(pdf_directory, exist_ok=True)
-[open(os.path.join(pdf_directory, pdf_url.split("/")[-1]), "wb").write(requests.get(pdf_url).content) for pdf_url in pdf_urls]
+for pdf_url in pdf_urls:
+    pdf_filename = pdf_url.split("/")[-1]
+    if pdf_filename not in os.listdir(pdf_directory):
+        with open(os.path.join(pdf_directory, pdf_filename), "wb") as f:
+            f.write(requests.get(pdf_url).content)
 
 # Step 3: Extract tables from PDF and save as CSVs, ensuring unique rows
 csv_directory = "csv_files"
@@ -22,7 +26,7 @@ header = None  # Initialize header to None
 unique_rows = set()  # Set to keep track of unique rows
 
 for pdf_filename in os.listdir(pdf_directory):
-    pdf_tables = tabula.io.read_pdf(os.path.join(pdf_directory, pdf_filename), pages='all', multiple_tables=True)
+    pdf_tables = tabula.read_pdf(os.path.join(pdf_directory, pdf_filename), pages='all', multiple_tables=True)
     if pdf_tables:  # Check if tables exist in the PDF
         first_table = pdf_tables[0]  # Get the first table from the PDF
         header = list(first_table.columns)  # Extract the header row from the first table
@@ -34,13 +38,26 @@ for pdf_filename in os.listdir(pdf_directory):
         for i, table in enumerate(pdf_tables):
             csv_filename = f"{pdf_filename[:-4]}_table_{i+1}.csv"
             csv_path = os.path.join(csv_directory, csv_filename)
-            table.to_csv(csv_path, index=False)
+            try:
+                table.to_csv(csv_path, index=False)
+            except Exception as e:
+                print(f"Error saving CSV file {csv_filename}: {e}")
 
-# Step 4: Create DataFrame with unique rows and add a header row
+# Step 4: Load existing CSV if present, otherwise create a new DataFrame
+csv_path = "eviction_notices.csv"
+if os.path.exists(csv_path):
+    existing_df = pd.read_csv(csv_path)
+else:
+    existing_df = pd.DataFrame()
+
+# Create DataFrame with unique rows and add a header row
 final_df = pd.DataFrame(unique_rows, columns=header)
 
 # Remove columns with all NaN values
 final_df = final_df.dropna(axis=1, how='all')
+
+# Drop duplicate rows based on all columns
+final_df = final_df.drop_duplicates()
 
 # Drop duplicate rows based on all columns
 final_df = final_df.drop_duplicates()
@@ -51,4 +68,8 @@ final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='co
 # Sort the DataFrame by 'Eviction Date' and then by 'Case Number'
 final_df = final_df.sort_values(by=['Eviction Date', 'Case Number'])
 
-final_df.to_csv("eviction_notices.csv", index=False)
+# Save the final DataFrame to CSV
+try:
+    final_df.to_csv(csv_path, index=False)
+except Exception as e:
+    print(f"Error saving final DataFrame to CSV: {e}")
