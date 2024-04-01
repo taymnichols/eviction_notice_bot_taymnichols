@@ -3,6 +3,16 @@ from bs4 import BeautifulSoup
 import os
 import tabula
 import pandas as pd
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+# Read SMTP configuration from environment variables
+email_sender = os.environ.get('EMAIL_SENDER')
+email_recipient = os.environ.get('EMAIL_RECIPIENT')
+sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
+smtp_server = 'smtp.sendgrid.net'
+smtp_port = 587
 
 # Step 1: Scrape the website and extract PDF URLs
 url = "https://ota.dc.gov/page/scheduled-evictions"
@@ -12,11 +22,13 @@ pdf_urls = [a["href"] for a in BeautifulSoup(response.text, "html.parser").find_
 # Step 2: Download PDF files if they are not already present in the pdf_files directory
 pdf_directory = "pdf_files"
 os.makedirs(pdf_directory, exist_ok=True)
+new_pdfs = []  # List to store names of newly downloaded PDFs
 for pdf_url in pdf_urls:
     pdf_filename = pdf_url.split("/")[-1]
     if pdf_filename not in os.listdir(pdf_directory):
         with open(os.path.join(pdf_directory, pdf_filename), "wb") as f:
             f.write(requests.get(pdf_url).content)
+        new_pdfs.append(pdf_filename)  # Record newly downloaded PDFs
 
 # Step 3: Extract tables from PDF and save as CSVs, ensuring unique rows
 csv_directory = "csv_files"
@@ -59,8 +71,8 @@ final_df = final_df.dropna(axis=1, how='all')
 # Drop duplicate rows based on all columns
 final_df = final_df.drop_duplicates()
 
-# Drop duplicate rows based on all columns
-final_df = final_df.drop_duplicates()
+# Count distinct rows before removing duplicates
+distinct_rows_before = final_df.shape[0]
 
 # Convert the 'Eviction Date' column to datetime format
 final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce')
@@ -73,3 +85,27 @@ try:
     final_df.to_csv(csv_path, index=False)
 except Exception as e:
     print(f"Error saving final DataFrame to CSV: {e}")
+
+if new_pdfs:
+    email_subject = "New PDFs Downloaded"
+    email_body = f"New PDFs downloaded: {', '.join(new_pdfs)}"
+
+ # Count distinct rows after removing duplicates
+distinct_rows_after = final_df.shape[0]
+
+# Email Notification setup
+if new_pdfs:
+    email_subject = "New PDFs Downloaded"
+    email_body = f"New PDFs downloaded: {', '.join(new_pdfs)}\nDistinct rows added: {distinct_rows_after - distinct_rows_before}"
+
+    # Create message
+    msg = MIMEMultipart()
+    msg['From'] = email_sender
+    msg['To'] = email_recipient
+    msg['Subject'] = email_subject
+    msg.attach(MIMEText(email_body, 'plain'))
+
+    # Send email
+    smtp_server.send_message(msg)
+    smtp_server.quit()
+
