@@ -1,7 +1,10 @@
 # eviction_notice_bot_taymnichols
 This bot will scrape the eviction notices website and alert us when there is new data available
 
-### March 30 Update
+#### April 1 Update
+Started working on adding the email set up - didn't get very far. Ran into problems with SendGrid - will continue working on it wednesday
+
+## March 30 Update
 So far, I created a scraper to download the PDFs, used Tabula to read the tables and convert them to csvs, stack all the csvs together and then remove duplicate rows. 
 
 Last week I automated this process to run every day at 6 pm and update the CSV if there is a new pdf available. I now have a functioning, automatic scraper which is really cool.
