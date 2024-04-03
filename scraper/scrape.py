@@ -3,16 +3,13 @@ from bs4 import BeautifulSoup
 import os
 import tabula
 import pandas as pd
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import mailgun
 
 # Read SMTP configuration from environment variables
 email_sender = os.environ.get('EMAIL_SENDER')
 email_recipient = os.environ.get('EMAIL_RECIPIENT')
-sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
-smtp_server = 'smtp.sendgrid.net'
-smtp_port = 587
+mailgun_api_key = os.environ.get('MAILGUN_API_KEY')
+mailgun_domain = os.environ.get('MAILGUN_DOMAIN')
 
 # Step 1: Scrape the website and extract PDF URLs
 url = "https://ota.dc.gov/page/scheduled-evictions"
@@ -98,14 +95,17 @@ if new_pdfs:
     email_subject = "New PDFs Downloaded"
     email_body = f"New PDFs downloaded: {', '.join(new_pdfs)}\nDistinct rows added: {distinct_rows_after - distinct_rows_before}"
 
-    # Create message
-    msg = MIMEMultipart()
-    msg['From'] = email_sender
-    msg['To'] = email_recipient
-    msg['Subject'] = email_subject
-    msg.attach(MIMEText(email_body, 'plain'))
+    # Create Mailgun client
+    mg_client = mailgun.Mailgun(mailgun_domain, mailgun_api_key)
 
     # Send email
-    smtp_server.send_message(msg)
-    smtp_server.quit()
-
+    try:
+        mg_client.send_email(
+            sender=email_sender,
+            recipient=email_recipient,
+            subject=email_subject,
+            body=email_body
+        )
+        print("Email sent successfully.")
+    except Exception as e:
+        print(f"Error sending email: {e}")

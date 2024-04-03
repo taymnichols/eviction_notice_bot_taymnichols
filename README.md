@@ -1,8 +1,8 @@
 # eviction_notice_bot_taymnichols
 This bot will scrape the eviction notices website and alert us when there is new data available
 
-#### April 1 Update
-Started working on adding the email set up - didn't get very far. Ran into problems with SendGrid - will continue working on it wednesday
+#### April 3 Update
+Added the email set up using Mailgun - have not tested it out yet.
 
 ## March 30 Update
 So far, I created a scraper to download the PDFs, used Tabula to read the tables and convert them to csvs, stack all the csvs together and then remove duplicate rows. 
@@ -11,6 +11,10 @@ Last week I automated this process to run every day at 6 pm and update the CSV i
 
 # What I need to do
 * Add a way to plot where these locations are on the map
+
+* get the dataset to route that to each ward and identify ward and hotspots
+
+* set bot to send email including info on number of evictions per ward and eviction hotspots
 
 * create a map
 
