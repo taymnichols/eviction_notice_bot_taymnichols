@@ -1,15 +1,20 @@
 # eviction_notice_bot_taymnichols
 This bot will scrape the eviction notices website and alert us when there is new data available
 
-#### April 6 Update
+## April 6 Update
 Tried to use mailgun to send emails but it was too complicated. Bit the bullet and switched to a slackbot - I don't see it in the NewsApps slackbot channel yet so will prob need to do some troubleshooting on Monday. I also added a washington DC column and split my address column into address and apt #. My database.sh file is serving the old csv though (not sure why it made a new one) so also need to troubleshoot that. I will probably need some help setting up the API to have it map each address to a ward. Finally, I need to update my slackbot message.
+
+## Realistic to do list for this week:
+* Make sure Slackbot works and is up and running and TEST IT
+* Create slackbot notification to identify hotspots (base addresses that appear more than 5 times in data)
+* If time I would like to set it up to identify the number of evictions per ward, however I'm not sure how doable this is in the time left. I think I can do it but will likely need help/have questions.
+* Clean my code to make sure it's at max efficiency
 
 ## March 30 Update
 So far, I created a scraper to download the PDFs, used Tabula to read the tables and convert them to csvs, stack all the csvs together and then remove duplicate rows. 
-
 Last week I automated this process to run every day at 6 pm and update the CSV if there is a new pdf available. I now have a functioning, automatic scraper which is really cool.
 
-# What I need to do
+# What I need to do (MEGALIST/NEWS APP LIST)
 * Add a way to plot where these locations are on the map
 
 * get the dataset to route that to each ward and identify ward and hotspots
