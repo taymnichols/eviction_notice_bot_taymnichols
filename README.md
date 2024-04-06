@@ -1,8 +1,8 @@
 # eviction_notice_bot_taymnichols
 This bot will scrape the eviction notices website and alert us when there is new data available
 
-#### April 3 Update
-Added the email set up using Mailgun - have not tested it out yet.
+#### April 6 Update
+Tried to use mailgun to send emails but it was too complicated. Bit the bullet and switched to a slackbot - I don't see it in the NewsApps slackbot channel yet so will prob need to do some troubleshooting on Monday. I also added a washington DC column and split my address column into address and apt #. My database.sh file is serving the old csv though (not sure why it made a new one) so also need to troubleshoot that. I will probably need some help setting up the API to have it map each address to a ward. Finally, I need to update my slackbot message.
 
 ## March 30 Update
 So far, I created a scraper to download the PDFs, used Tabula to read the tables and convert them to csvs, stack all the csvs together and then remove duplicate rows. 

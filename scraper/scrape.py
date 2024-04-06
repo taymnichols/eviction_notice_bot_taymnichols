@@ -3,13 +3,8 @@ from bs4 import BeautifulSoup
 import os
 import tabula
 import pandas as pd
-import mailgun
-
-# Read SMTP configuration from environment variables
-email_sender = os.environ.get('EMAIL_SENDER')
-email_recipient = os.environ.get('EMAIL_RECIPIENT')
-mailgun_api_key = os.environ.get('MAILGUN_API_KEY')
-mailgun_domain = os.environ.get('MAILGUN_DOMAIN')
+from slack import WebClient
+from slack.errors import SlackApiError
 
 # Step 1: Scrape the website and extract PDF URLs
 url = "https://ota.dc.gov/page/scheduled-evictions"
@@ -62,6 +57,22 @@ else:
 # Create DataFrame with unique rows and add a header row
 final_df = pd.DataFrame(unique_rows, columns=header)
 
+# Split 'Defendant Address' column into 'Street Address' and 'Apartment Number'
+final_df[['Street Address', 'Apartment Number']] = final_df['Defendant Address'].str.split('#', n=1, expand=True)
+
+# Replace None with 'N/A' in 'Apartment Number' column
+final_df['Apartment Number'] = final_df['Apartment Number'].fillna('N/A')
+ß
+# Remove leading and trailing whitespace from both new columns
+final_df['Street Address'] = final_df['Street Address'].str.strip()
+final_df['Apartment Number'] = final_df['Apartment Number'].str.strip()
+
+# Add new column 'City' with value 'Washington, D.C.'
+final_df['City'] = 'WASHINGTON, D.C.'
+
+# Remove original 'Defendant Address' column
+final_df.drop(columns=['Defendant Address'], inplace=True)
+
 # Remove columns with all NaN values
 final_df = final_df.dropna(axis=1, how='all')
 
@@ -84,28 +95,20 @@ except Exception as e:
     print(f"Error saving final DataFrame to CSV: {e}")
 
 if new_pdfs:
-    email_subject = "New PDFs Downloaded"
-    email_body = f"New PDFs downloaded: {', '.join(new_pdfs)}"
+    slack_token = os.environ.get('SLACK_API_TOKEN')
 
- # Count distinct rows after removing duplicates
-distinct_rows_after = final_df.shape[0]
+    client = WebClient(token=slack_token)
+    msg = f"New PDFs downloaded: {', '.join(new_pdfs)}\nNumber of new scheduled evictions added: {distinct_rows_after - distinct_rows_before}."
 
-# Email Notification setup
-if new_pdfs:
-    email_subject = "New PDFs Downloaded"
-    email_body = f"New PDFs downloaded: {', '.join(new_pdfs)}\nDistinct rows added: {distinct_rows_after - distinct_rows_before}"
-
-    # Create Mailgun client
-    mg_client = mailgun.Mailgun(mailgun_domain, mailgun_api_key)
-
-    # Send email
     try:
-        mg_client.send_email(
-            sender=email_sender,
-            recipient=email_recipient,
-            subject=email_subject,
-            body=email_body
+        response = client.chat_postMessage(
+            channel="slack-bots",
+            text=msg,
+            unfurl_links=True, 
+            unfurl_media=True
         )
-        print("Email sent successfully.")
-    except Exception as e:
-        print(f"Error sending email: {e}")
+        print("Message sent successfully!")
+    except SlackApiError as e:
+        assert e.response["ok"] is False
+        assert e.response["error"]
+        print(f"Error sending message: {e.response['error']}")
