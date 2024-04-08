@@ -94,6 +94,9 @@ try:
 except Exception as e:
     print(f"Error saving final DataFrame to CSV: {e}")
 
+# Count distinct rows after removing duplicates
+distinct_rows_after = final_df.shape[0]
+
 if new_pdfs:
     slack_token = os.environ.get('SLACK_API_TOKEN')
 
