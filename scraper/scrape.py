@@ -79,39 +79,43 @@ final_df = final_df.dropna(axis=1, how='all')
 # Drop duplicate rows based on all columns
 final_df = final_df.drop_duplicates()
 
+# Rearrange columns in final_df
+final_df = final_df[['Case Number', 'Eviction Date', 'Street Address', 'Apartment Number', 'Quad', 'City', 'Zipcode']]
+
 # Count distinct rows before removing duplicates
-distinct_rows_before = final_df.shape[0]
+distinct_rows_before = existing_df.shape[0]
 
-# Convert the 'Eviction Date' column to datetime format
-final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce')
+# Combine existing DataFrame with final_df and drop duplicates
+combined_df = pd.concat([existing_df, final_df], ignore_index=True)
+combined_df.drop_duplicates(inplace=True)
 
-# Sort the DataFrame by 'Eviction Date' and then by 'Case Number'
-final_df = final_df.sort_values(by=['Eviction Date', 'Case Number'])
+# Calculate distinct rows after removing duplicates
+distinct_rows_after = combined_df.shape[0]
 
-# Save the final DataFrame to CSV
+# Save the combined DataFrame to CSV
 try:
-    final_df.to_csv(csv_path, index=False)
+    combined_df.to_csv(csv_path, index=False)
 except Exception as e:
-    print(f"Error saving final DataFrame to CSV: {e}")
+    print(f"Error saving combined DataFrame to CSV: {e}")
 
-# Count distinct rows after removing duplicates
-distinct_rows_after = final_df.shape[0]
+# Print number of new distinct rows added
+print(f"Number of new distinct rows added: {distinct_rows_after - distinct_rows_before}")
 
-if new_pdfs:
-    slack_token = os.environ.get('SLACK_API_TOKEN')
+#if new_pdfs:
+    #slack_token = os.environ.get('SLACK_API_TOKEN')
 
-    client = WebClient(token=slack_token)
-    msg = f"New PDFs downloaded: {', '.join(new_pdfs)}\nNumber of new scheduled evictions added: {distinct_rows_after - distinct_rows_before}."
+   # client = WebClient(token=slack_token)
+    #msg = f"New PDFs downloaded: {', '.join(new_pdfs)}\nNumber of new scheduled evictions added: {distinct_rows_after - distinct_rows_before}."
 
-    try:
-        response = client.chat_postMessage(
-            channel="slack-bots",
-            text=msg,
-            unfurl_links=True, 
-            unfurl_media=True
-        )
-        print("Message sent successfully!")
-    except SlackApiError as e:
-        assert e.response["ok"] is False
-        assert e.response["error"]
-        print(f"Error sending message: {e.response['error']}")
+    #try:
+        #response = client.chat_postMessage(
+           # channel="slack-bots",
+           # text=msg,
+          #  unfurl_links=True, 
+           # unfurl_media=True
+        #)
+      #  print("Message sent successfully!")
+   # except SlackApiError as e:
+     #   assert e.response["ok"] is False
+      #  assert e.response["error"]
+      #  print(f"Error sending message: {e.response['error']}")
