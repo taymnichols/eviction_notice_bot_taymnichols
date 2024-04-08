@@ -20,7 +20,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install requests bs4 tabula-py pandas slack
+        run: pip install requests bs4 tabula-py pandas slack-sdk
 
       - name: Run scraper
         run: python scraper/scrape.py
