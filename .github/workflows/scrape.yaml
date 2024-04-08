@@ -29,6 +29,7 @@ jobs:
         run: |-
           git config --global user.name "eviction_notice_bot"
           git config --global user.email "actions@users.noreply.github.com"
+          git pull
           git add -A
           timestamp=$(date -u)
           git commit -m "New scheduled evictions data available: ${timestamp}" || exit 0
