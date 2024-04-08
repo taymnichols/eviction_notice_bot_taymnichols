@@ -62,7 +62,7 @@ final_df[['Street Address', 'Apartment Number']] = final_df['Defendant Address']
 
 # Replace None with 'N/A' in 'Apartment Number' column
 final_df['Apartment Number'] = final_df['Apartment Number'].fillna('N/A')
-ß
+
 # Remove leading and trailing whitespace from both new columns
 final_df['Street Address'] = final_df['Street Address'].str.strip()
 final_df['Apartment Number'] = final_df['Apartment Number'].str.strip()
