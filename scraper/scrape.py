@@ -120,25 +120,22 @@ combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], erro
 
 latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')  # Get the latest date in eviction_notices.csv
 
-# Check if new_rows is defined before printing
 if 'new_rows' in locals():
-    print(f"Number of new rows added: {new_rows.shape[0]}")
-    print({latest_date})
-
-if new_pdfs:
     slack_token = os.environ.get('SLACK_API_TOKEN')
     client = WebClient(token=slack_token)
     msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows.shape[0]} new scheduled evictions added to your dataset."
 
-try:
-    response = client.chat_postMessage(
-        channel="slack-bots",
-        text=msg,
-        unfurl_links=True,
-        unfurl_media=True
-    )
-    print("Message sent successfully!")
-except SlackApiError as e:
-    assert e.response["ok"] is False
-    assert e.response["error"]
-    print(f"Error sending message: {e.response['error']}")
+    try:
+        response = client.chat_postMessage(
+            channel="slack-bots",
+            text=msg,
+            unfurl_links=True,
+            unfurl_media=True
+        )
+        print("Message sent successfully!")
+    except SlackApiError as e:
+        assert e.response["ok"] is False
+        assert e.response["error"]
+        print(f"Error sending message: {e.response['error']}")
+
+
