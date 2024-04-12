@@ -47,31 +47,8 @@ for pdf_filename in os.listdir(pdf_directory):
             except Exception as e:
                 print(f"Error saving CSV file {csv_filename}: {e}")
 
-# Step 4: Load existing CSV if present, otherwise create a new DataFrame
-csv_path = "eviction_notices.csv"
-if os.path.exists(csv_path):
-    existing_df = pd.read_csv(csv_path)
-else:
-    existing_df = pd.DataFrame()
-
 # Create DataFrame with unique rows and add a header row
 final_df = pd.DataFrame(unique_rows, columns=header)
-
-# Split 'Defendant Address' column into 'Street Address' and 'Apartment Number'
-final_df[['Street Address', 'Apartment Number']] = final_df['Defendant Address'].str.split('#', n=1, expand=True)
-
-# Replace None with 'N/A' in 'Apartment Number' column
-final_df['Apartment Number'] = final_df['Apartment Number'].fillna('N/A')
-
-# Remove leading and trailing whitespace from both new columns
-final_df['Street Address'] = final_df['Street Address'].str.strip()
-final_df['Apartment Number'] = final_df['Apartment Number'].str.strip()
-
-# Add new column 'City' with value 'Washington, D.C.'
-final_df['City'] = 'WASHINGTON, D.C.'
-
-# Remove original 'Defendant Address' column
-final_df.drop(columns=['Defendant Address'], inplace=True)
 
 # Remove columns with all NaN values
 final_df = final_df.dropna(axis=1, how='all')
@@ -79,18 +56,44 @@ final_df = final_df.dropna(axis=1, how='all')
 # Drop duplicate rows based on all columns
 final_df = final_df.drop_duplicates()
 
-# Rearrange columns in final_df
-final_df = final_df[['Case Number', 'Eviction Date', 'Street Address', 'Apartment Number', 'Quad', 'City', 'Zipcode']]
+## Step 4: Load existing CSV if present, otherwise create a new DataFrame
+csv_path = "eviction_notices.csv"
+if os.path.exists(csv_path):
+    existing_df = pd.read_csv(csv_path)
+else:
+    # If the CSV doesn't exist, create a new DataFrame with the header row from the first PDF
+    existing_df = pd.DataFrame(columns=header)
 
-# Count distinct rows before removing duplicates
-distinct_rows_before = existing_df.shape[0]
+# Filter out columns with no data or with names like "Unnamed"
+existing_df = existing_df.loc[:, ~existing_df.columns.str.startswith('Unnamed')].dropna(axis=1, how='all')
 
-# Combine existing DataFrame with final_df and drop duplicates
-combined_df = pd.concat([existing_df, final_df], ignore_index=True)
-combined_df.drop_duplicates(inplace=True)
+# Check if existing_df is empty
+if not existing_df.empty:
+    # Count distinct rows before removing duplicates
+    distinct_rows_before = existing_df.shape[0]
 
-# Calculate distinct rows after removing duplicates
-distinct_rows_after = combined_df.shape[0]
+    # Identify new rows by checking for duplicates based on "Case Number" and "Eviction Date" columns
+    existing_case_numbers_dates = existing_df[['Case Number', 'Eviction Date']]
+    new_case_numbers_dates = final_df[['Case Number', 'Eviction Date']]
+
+    # Merge final_df with existing_df on the specific columns
+    merged_df = final_df.merge(existing_df[['Case Number', 'Eviction Date']], on=['Case Number', 'Eviction Date'], how='left', indicator=True)
+
+    # Filter only the rows that are not present in existing_df
+    new_rows = merged_df[merged_df['_merge'] == 'left_only'].drop(columns='_merge')
+
+    # Add only new rows to the existing DataFrame
+    combined_df = pd.concat([existing_df, new_rows], ignore_index=True)
+
+    # Calculate the number of new rows added
+    new_rows_added = new_rows.shape[0]
+
+else:
+    # If existing_df is empty, set combined_df to final_df
+    combined_df = final_df.copy()
+
+    # Optionally, print a message or perform any other actions
+    print("No data found in the existing DataFrame. Skipping duplicate identification process.")
 
 # Save the combined DataFrame to CSV
 try:
@@ -98,24 +101,30 @@ try:
 except Exception as e:
     print(f"Error saving combined DataFrame to CSV: {e}")
 
-# Print number of new distinct rows added
-print(f"Number of new distinct rows added: {distinct_rows_after - distinct_rows_before}")
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'])  # Convert "Eviction Date" column to datetime type
 
-#if new_pdfs:
-    #slack_token = os.environ.get('SLACK_API_TOKEN')
+latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')  # Get the latest date in eviction_notices.csv
 
-   # client = WebClient(token=slack_token)
-    #msg = f"New PDFs downloaded: {', '.join(new_pdfs)}\nNumber of new scheduled evictions added: {distinct_rows_after - distinct_rows_before}."
+print(f"Number of new rows added: {new_rows.shape[0]}")
+print({latest_date})
 
-    #try:
-        #response = client.chat_postMessage(
-           # channel="slack-bots",
-           # text=msg,
-          #  unfurl_links=True, 
-           # unfurl_media=True
-        #)
-      #  print("Message sent successfully!")
-   # except SlackApiError as e:
-     #   assert e.response["ok"] is False
-      #  assert e.response["error"]
-      #  print(f"Error sending message: {e.response['error']}")
+if new_pdfs:
+   slack_token = os.environ.get('SLACK_API_TOKEN')
+
+
+   client = WebClient(token=slack_token)
+   msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows_added} new scheduled evictions added to your dataset."
+
+
+   try:
+       response = client.chat_postMessage(
+           channel="slack-bots",
+           text=msg,
+           unfurl_links=True,
+           unfurl_media=True
+       )
+       print("Message sent successfully!")
+   except SlackApiError as e:
+       assert e.response["ok"] is False
+       assert e.response["error"]
+       print(f"Error sending message: {e.response['error']}")
