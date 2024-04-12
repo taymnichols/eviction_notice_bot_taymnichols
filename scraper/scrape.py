@@ -101,7 +101,8 @@ try:
 except Exception as e:
     print(f"Error saving combined DataFrame to CSV: {e}")
 
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'])  # Convert "Eviction Date" column to datetime type
+# Convert "Eviction Date" column to datetime type
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], format='%m/%d/%Y')
 
 latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')  # Get the latest date in eviction_notices.csv
 
