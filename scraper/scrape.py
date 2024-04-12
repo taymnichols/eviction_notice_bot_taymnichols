@@ -131,14 +131,14 @@ if 'new_rows' in locals():
         msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows.shape[0]} new scheduled evictions added to your dataset."
 
     try:
-       response = client.chat_postMessage(
-           channel="slack-bots",
-           text=msg,
-           unfurl_links=True,
-           unfurl_media=True
-       )
-       print("Message sent successfully!")
-   except SlackApiError as e:
-       assert e.response["ok"] is False
-       assert e.response["error"]
-       print(f"Error sending message: {e.response['error']}")
+    response = client.chat_postMessage(
+        channel="slack-bots",
+        text=msg,
+        unfurl_links=True,
+        unfurl_media=True
+    )
+    print("Message sent successfully!")
+except SlackApiError as e:
+    assert e.response["ok"] is False
+    assert e.response["error"]
+    print(f"Error sending message: {e.response['error']}")
