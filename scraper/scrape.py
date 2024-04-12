@@ -101,8 +101,22 @@ try:
 except Exception as e:
     print(f"Error saving combined DataFrame to CSV: {e}")
 
-# Convert "Eviction Date" column to datetime type
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], format='%m/%d/%Y')
+# Convert "Eviction Date" column to datetime type, handling different date formats
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
+
+# Check for any entries that could not be converted to datetime
+invalid_dates = combined_df[combined_df['Eviction Date'].isna()]['Eviction Date']
+
+# Convert the remaining valid dates to the expected format
+combined_df.loc[~combined_df['Eviction Date'].isna(), 'Eviction Date'] = combined_df.loc[~combined_df['Eviction Date'].isna(), 'Eviction Date'].dt.strftime('%m/%d/%Y')
+
+# Print out the invalid dates
+if not invalid_dates.empty:
+    print("Invalid dates detected:")
+    print(invalid_dates)
+
+# Now convert the 'Eviction Date' column to datetime again
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
 latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')  # Get the latest date in eviction_notices.csv
 
@@ -115,7 +129,6 @@ if new_pdfs:
 
    client = WebClient(token=slack_token)
    msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows_added} new scheduled evictions added to your dataset."
-
 
    try:
        response = client.chat_postMessage(
