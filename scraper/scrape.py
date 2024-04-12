@@ -130,7 +130,7 @@ if 'new_rows' in locals():
         client = WebClient(token=slack_token)
         msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows.shape[0]} new scheduled evictions added to your dataset."
 
-    try:
+try:
     response = client.chat_postMessage(
         channel="slack-bots",
         text=msg,
