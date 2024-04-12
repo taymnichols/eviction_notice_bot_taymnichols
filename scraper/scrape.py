@@ -128,7 +128,7 @@ if new_pdfs:
 
 
    client = WebClient(token=slack_token)
-   msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows_added} new scheduled evictions added to your dataset."
+   msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows.shape[0]} new scheduled evictions added to your dataset."
 
    try:
        response = client.chat_postMessage(
