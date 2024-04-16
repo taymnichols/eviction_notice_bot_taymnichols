@@ -5,7 +5,7 @@ on:
     branches:
       - '*'
   schedule:
-    - cron: "0 23 * * *"  # Runs every day at 6 PM EST
+    - cron: "0 23 * * 5"  # Runs every day at 6 PM EST
 
 jobs:
   scheduled:
