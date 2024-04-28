@@ -26,7 +26,6 @@ for pdf_url in pdf_urls:
 csv_directory = "csv_files"
 os.makedirs(csv_directory, exist_ok=True)
 
-header = None  # Initialize header to None
 unique_rows = set()  # Set to keep track of unique rows
 
 for pdf_filename in os.listdir(pdf_directory):
