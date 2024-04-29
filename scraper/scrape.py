@@ -47,7 +47,16 @@ for pdf_filename in os.listdir(pdf_directory):
                 print(f"Error saving CSV file {csv_filename}: {e}")
 
 # Create DataFrame with unique rows and add a header row
-final_df = pd.DataFrame(unique_rows, columns=header)
+final_df = pd.DataFrame(unique_rows)
+
+# Remove columns with all NaN values
+final_df = final_df.dropna(axis=1, how='all')
+
+# If there are still columns with no data, remove them
+final_df = final_df.loc[:, final_df.notna().any()]
+
+# Optionally, you can assign the header to the columns
+final_df.columns = header
 
 # Remove columns with all NaN values
 final_df = final_df.dropna(axis=1, how='all')
@@ -117,7 +126,21 @@ if not invalid_dates.empty:
 # Now convert the 'Eviction Date' column to datetime again
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
-latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')  # Get the latest date in eviction_notices.csv
+#convert zipcode col to integer
+combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int).astype
+
+combined_df['City'] = 'Washington, DC'
+
+# Create a new column 'full_address' by concatenating the existing columns
+combined_df['full_address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode']
+
+output_csv_path = "full_addresses.csv"
+
+# Write the "full_address" column to a new CSV file
+combined_df['full_address'].to_csv(output_csv_path, index=False, header=True)
+
+# Get the latest date in eviction_notices.csv
+latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')
 
 if 'new_rows' in locals():
     slack_token = os.environ.get('SLACK_API_TOKEN')
