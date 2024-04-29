@@ -125,6 +125,7 @@ if not invalid_dates.empty:
     print("Invalid dates detected:")
     print(invalid_dates)
 
+# NOTE TO SELF - I think I need to move the following section up higher in the code to perform it on the full DF
 # Now convert the 'Eviction Date' column to datetime again
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
