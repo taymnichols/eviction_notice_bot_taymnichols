@@ -127,7 +127,7 @@ if not invalid_dates.empty:
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
 #convert zipcode col to integer
-combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int).astype
+combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int)
 
 combined_df['City'] = 'Washington, DC'
 
