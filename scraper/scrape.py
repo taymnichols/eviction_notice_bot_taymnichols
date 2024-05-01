@@ -129,7 +129,7 @@ combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int)
 combined_df['City'] = 'Washington, DC'
 
 # Create a new column 'full_address' by concatenating the existing columns
-combined_df['Full Address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode'].astype(str)
+combined_df['full_address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode'].astype(str)
 
 # Save the combined DataFrame to CSV
 try:
