@@ -105,12 +105,6 @@ else:
     # Optionally, print a message or perform any other actions
     print("No data found in the existing DataFrame. Skipping duplicate identification process.")
 
-# Save the combined DataFrame to CSV
-try:
-    combined_df.to_csv(csv_path, index=False)
-except Exception as e:
-    print(f"Error saving combined DataFrame to CSV: {e}")
-
 # Convert "Eviction Date" column to datetime type, handling different date formats
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
@@ -125,18 +119,23 @@ if not invalid_dates.empty:
     print("Invalid dates detected:")
     print(invalid_dates)
 
-# NOTE TO SELF - I think I need to move the following section up higher in the code to perform it on the full DF
 # Now convert the 'Eviction Date' column to datetime again
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
 
-#convert zipcode col to integer
+# Convert zipcode col to integer
 combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int)
 
+# Add a column for the city
 combined_df['City'] = 'Washington, DC'
 
 # Create a new column 'full_address' by concatenating the existing columns
-combined_df['full_address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode'].astype(str)
+combined_df['Full Address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode'].astype(str)
 
+# Save the combined DataFrame to CSV
+try:
+    combined_df.to_csv(csv_path, index=False)
+except Exception as e:
+    print(f"Error saving combined DataFrame to CSV: {e}")
 
 # Get the latest date in eviction_notices.csv
 latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')
@@ -158,5 +157,3 @@ if 'new_rows' in locals():
         assert e.response["ok"] is False
         assert e.response["error"]
         print(f"Error sending message: {e.response['error']}")
-
-
