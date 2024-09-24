@@ -3,8 +3,6 @@ from bs4 import BeautifulSoup
 import os
 import tabula
 import pandas as pd
-from slack import WebClient
-from slack.errors import SlackApiError
 
 # Step 1: Scrape the website and extract PDF URLs
 url = "https://ota.dc.gov/page/scheduled-evictions"
@@ -79,12 +77,19 @@ existing_df = existing_df.loc[:, ~existing_df.columns.str.startswith('Unnamed')]
 
 # Check if existing_df is empty
 if not existing_df.empty:
-    # Count distinct rows before removing duplicates
-    distinct_rows_before = existing_df.shape[0]
+    # Convert 'Eviction Date' columns to datetime in both DataFrames
+    final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce')
+    existing_df['Eviction Date'] = pd.to_datetime(existing_df['Eviction Date'], errors='coerce')
 
-    # Identify new rows by checking for duplicates based on "Case Number" and "Eviction Date" columns
-    existing_case_numbers_dates = existing_df[['Case Number', 'Eviction Date']]
-    new_case_numbers_dates = final_df[['Case Number', 'Eviction Date']]
+    # Identify entries that could not be converted in final_df
+    invalid_dates_final = final_df[final_df['Eviction Date'].isna()]
+    print("Entries in final_df that could not be converted to datetime:")
+    print(invalid_dates_final[['Case Number', 'Eviction Date']])
+
+    # Identify entries that could not be converted in existing_df
+    invalid_dates_existing = existing_df[existing_df['Eviction Date'].isna()]
+    print("Entries in existing_df that could not be converted to datetime:")
+    print(invalid_dates_existing[['Case Number', 'Eviction Date']])
 
     # Merge final_df with existing_df on the specific columns
     merged_df = final_df.merge(existing_df[['Case Number', 'Eviction Date']], on=['Case Number', 'Eviction Date'], how='left', indicator=True)
@@ -140,20 +145,4 @@ except Exception as e:
 # Get the latest date in eviction_notices.csv
 latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')
 
-if 'new_rows' in locals():
-    slack_token = os.environ.get('SLACK_API_TOKEN')
-    client = WebClient(token=slack_token)
-    msg = f"There is new data available on scheduled evictions through {latest_date}. There were {new_rows.shape[0]} new scheduled evictions added to your dataset."
-
-    try:
-        response = client.chat_postMessage(
-            channel="slack-bots",
-            text=msg,
-            unfurl_links=True,
-            unfurl_media=True
-        )
-        print("Message sent successfully!")
-    except SlackApiError as e:
-        assert e.response["ok"] is False
-        assert e.response["error"]
-        print(f"Error sending message: {e.response['error']}")
+print(combined_df['Eviction Date'].unique())
