@@ -85,8 +85,8 @@ existing_df = existing_df.loc[:, ~existing_df.columns.str.startswith('Unnamed')]
 # Check if existing_df is empty
 if not existing_df.empty:
     # Convert 'Eviction Date' columns to datetime in both DataFrames
-    final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce')
-    existing_df['Eviction Date'] = pd.to_datetime(existing_df['Eviction Date'], errors='coerce')
+    final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce').dt.date
+    existing_df['Eviction Date'] = pd.to_datetime(existing_df['Eviction Date'], errors='coerce').dt.date
 
     # Identify entries that could not be converted in final_df
     invalid_dates_final = final_df[final_df['Eviction Date'].isna()]
@@ -118,13 +118,10 @@ else:
     print("No data found in the existing DataFrame. Skipping duplicate identification process.")
 
 # Convert "Eviction Date" column to datetime type, handling different date formats
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce').dt.date
 
 # Check for any entries that could not be converted to datetime
 invalid_dates = combined_df[combined_df['Eviction Date'].isna()]['Eviction Date']
-
-# Convert the remaining valid dates to the expected format
-combined_df.loc[~combined_df['Eviction Date'].isna(), 'Eviction Date'] = combined_df.loc[~combined_df['Eviction Date'].isna(), 'Eviction Date'].dt.strftime('%m/%d/%Y')
 
 # Print out the invalid dates
 if not invalid_dates.empty:
@@ -132,7 +129,7 @@ if not invalid_dates.empty:
     print(invalid_dates)
 
 # Now convert the 'Eviction Date' column to datetime again
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce').dt.date
 
 # Convert zipcode col to integer
 combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int)
