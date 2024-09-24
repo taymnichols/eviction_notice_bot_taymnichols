@@ -128,8 +128,8 @@ if not invalid_dates.empty:
     print("Invalid dates detected:")
     print(invalid_dates)
 
-# Now convert the 'Eviction Date' column to datetime again
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce').dt.date
+# Convert the 'Eviction Date' column to string format to exclude time
+combined_df['Eviction Date'] = combined_df['Eviction Date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else '')
 
 # Convert zipcode col to integer
 combined_df['Zipcode'] = combined_df['Zipcode'].fillna(-1).astype(int)
