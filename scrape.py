@@ -143,13 +143,12 @@ combined_df['City'] = 'Washington, DC'
 # Create a new column 'full_address' by concatenating the existing columns
 combined_df['Full Address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode'].astype(str)
 
+# Assuming final_df is your DataFrame
+combined_df.drop_duplicates(inplace=True)
+
 # Save the combined DataFrame to CSV
 try:
     combined_df.to_csv(csv_path, index=False)
 except Exception as e:
     print(f"Error saving combined DataFrame to CSV: {e}")
 
-# Get the latest date in eviction_notices.csv
-latest_date = combined_df['Eviction Date'].max().strftime('%B %d, %Y')
-
-print(combined_df['Eviction Date'].unique())
