@@ -3,9 +3,9 @@ name: Run Scraper
 on:
   push:
     branches:
-      - '*'
+      - '*'   # Triggers on all branches
   schedule:
-    - cron: "0 23 * * 5"  # Runs every day at 6 PM EST
+    - cron: "0 23 * * 5"  # Runs every Friday at 6 PM EST (23:00 UTC)
 
 jobs:
   scheduled:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
