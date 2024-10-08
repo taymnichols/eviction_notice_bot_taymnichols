@@ -20,10 +20,13 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install requests bs4 tabula-py pandas slack-sdk aiohttp
+        run: pip install requests bs4 tabula-py pandas slack-sdk aiohttp urllib.parse
 
       - name: Run scraper
         run: python scrape.py
+
+      - name: Run add_ward
+        run: python add_ward.py
 
       - name: Commit and push if changed
         run: |-
