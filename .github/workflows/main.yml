@@ -37,8 +37,15 @@ jobs:
           fi
 
       - name: Run address geocoding
+        id: geocoding
         if: steps.check_files.outputs.csv_updated == 'true'
-        run: python add_ward.py
+        run: |
+          python add_ward.py
+          if [ $? -eq 0 ] && [ -f "eviction_data_ward.csv" ]; then
+            echo "geocoding_complete=true" >> $GITHUB_OUTPUT
+          else
+            echo "geocoding_complete=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Commit and push all changes
         run: |-
@@ -47,5 +54,13 @@ jobs:
           git pull
           git add -A
           timestamp=$(date -u)
-          git commit -m "Updated eviction data: ${timestamp}" || exit 0
+          if [ "${{ steps.check_files.outputs.csv_updated }}" == "true" ]; then
+            if [ "${{ steps.geocoding.outputs.geocoding_complete }}" == "true" ]; then
+              git commit -m "✅ New eviction data found and geocoded successfully: ${timestamp}" || exit 0
+            else
+              git commit -m "⚠️ New eviction data found but geocoding incomplete: ${timestamp}" || exit 0
+            fi
+          else
+            git commit -m "No new eviction data found: ${timestamp}" || exit 0
+          fi
           git push
