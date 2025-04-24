@@ -1,4 +1,4 @@
-name: Run Scraper
+name: Run Scraper and Update Location Data
 
 on:
   push:
@@ -25,12 +25,27 @@ jobs:
       - name: Run scraper
         run: python scrape.py
 
-      - name: Commit and push if changed
+      - name: Check if CSV was updated
+        id: check_files
+        run: |
+          if git diff --name-only | grep -q "eviction_notices.csv"; then
+            echo "csv_updated=true" >> $GITHUB_OUTPUT
+            echo "CSV file was updated, will run add_ward.py"
+          else
+            echo "csv_updated=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in CSV file, skipping add_ward.py"
+          fi
+
+      - name: Run address geocoding
+        if: steps.check_files.outputs.csv_updated == 'true'
+        run: python add_ward.py
+
+      - name: Commit and push all changes
         run: |-
           git config --global user.name "eviction_notice_bot"
           git config --global user.email "actions@users.noreply.github.com"
           git pull
           git add -A
           timestamp=$(date -u)
-          git commit -m "New scheduled evictions data available: ${timestamp}" || exit 0
+          git commit -m "Updated eviction data: ${timestamp}" || exit 0
           git push
