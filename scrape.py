@@ -216,6 +216,9 @@ if not existing_df.empty:
    # Add only new rows to the existing DataFrame
    combined_df = pd.concat([existing_df, new_rows], ignore_index=True)
 
+   # Ensure all zipcodes are strings and clean
+   combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '')
+
 
    # Calculate the number of new rows added
    new_rows_added = new_rows.shape[0]
@@ -224,10 +227,12 @@ else:
    # If existing_df is empty, set combined_df to final_df
    combined_df = final_df.copy()
 
-
    # Optionally, print a message or perform any other actions
    print("No data found in the existing DataFrame. Skipping duplicate identification process.")
 
+
+# Ensure all zipcodes are strings and clean
+combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '')
 
 # Convert "Eviction Date" column to datetime type, handling different date formats
 combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce').dt.date
