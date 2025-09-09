@@ -72,7 +72,7 @@ for pdf_filename in os.listdir(pdf_directory):
                    quad = quad_match.group() if quad_match else ''
                   
                    # Extract date
-                   date_match = re.search(r'\d{1,2}/\d{1,2}/\d{4}', text)
+                   date_match = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', text)
                    date = date_match.group() if date_match else ''
                   
                    # Extract address
