@@ -5,284 +5,270 @@ import tabula
 import pandas as pd
 import re
 
+total_records_saved = 0
+total_skipped_with_data = 0
+skipped_with_data = []  # Store skipped rows that have some data
 
 # Step 1: Scrape the website and extract PDF URLs
 url = "https://ota.dc.gov/page/scheduled-evictions"
 response = requests.get(url)
 pdf_urls = [a["href"] for a in BeautifulSoup(response.text, "html.parser").find_all("a", href=True) if a["href"].endswith(".pdf")]
 
-
-# Step 2: Download PDF files if they are not already present in the pdf_files directory
+# Step 2: Download PDF files
 pdf_directory = "pdf_files"
 os.makedirs(pdf_directory, exist_ok=True)
-new_pdfs = []  # List to store names of newly downloaded PDFs
 for pdf_url in pdf_urls:
    pdf_filename = pdf_url.split("/")[-1]
    if pdf_filename not in os.listdir(pdf_directory):
        with open(os.path.join(pdf_directory, pdf_filename), "wb") as f:
            f.write(requests.get(pdf_url).content)
-       new_pdfs.append(pdf_filename)  # Record newly downloaded PDFs
 
-
-# Step 3: Extract tables from PDF and save as CSVs, ensuring unique rows
+# Step 3: Extract tables from PDF
 csv_directory = "csv_files"
 os.makedirs(csv_directory, exist_ok=True)
+unique_rows = set()
 
+def normalize_address(address):
+    """
+    Cleans and standardizes an address string to improve duplicate detection.
+    """
+    if not isinstance(address, str):
+        return ''
 
-unique_rows = set()  # Set to keep track of unique rows
+    # 1. Convert to lowercase for reliable matching
+    address = address.lower()
+    
+    # Remove "Also Known As" variations
+    address = address.split('a/k/a')[0]
 
+    # Standardize unit types
+    replacements = {
+        'apartment': 'apt',
+        'apt': '#',
+        'unit': '#',
+        '#': '#' # Ensures consistency
+    }
+    for old, new in replacements.items():
+        address = address.replace(old, new)
 
+    # Standardize street types
+    street_replacements = {
+        'street': 'st',
+        'avenue': 'ave',
+        'road': 'rd',
+        'drive': 'dr',
+        'place': 'pl',
+        'boulevard': 'blvd',
+        'court': 'ct',
+        'terrace': 'ter'
+    }
+    # Use word boundaries to avoid replacing parts of words
+    for old, new in street_replacements.items():
+        address = re.sub(r'\b' + old + r'\b', new, address)
+
+    # Remove all punctuation and collapse whitespace
+    address = re.sub(r'[^\w\s#]', '', address)
+    address = re.sub(r'\s+', ' ', address).strip()
+
+    # 2. Convert the final, clean string to Title Case
+    address = address.title()
+
+    return address
+
+def process_and_split_rows(pdf_tables):
+    """
+    Processes tables, splits merged records, and now ACCEPTS rows without case numbers.
+    """
+    global total_skipped_with_data, skipped_with_data
+    all_cleaned_rows = []
+
+    case_pattern = re.compile(r'(\d+-[A-Z]+-\d+(?:-[A-Z])?|\b\d{2,}-\d{2,3}\b|LTB-\d+-\d+)')
+    date_pattern = re.compile(r'\d{1,2}/\d{1,2}/\d{2,4}')
+    zip_pattern = re.compile(r'20\d{3}')
+    quad_pattern = re.compile(r'\b(NW|NE|SW|SE)\b')
+    junk_pattern = re.compile(r'case number|defendant address|eviction date|page \d', re.IGNORECASE)
+
+    if not pdf_tables:
+        return pd.DataFrame()
+
+    for table in pdf_tables:
+        table.columns = range(table.shape[1])
+        for _, row in table.iterrows():
+            row_str = ' '.join(str(item) for item in row.dropna())
+
+            if len(row_str.strip()) < 10 or junk_pattern.search(row_str):
+                continue
+
+            cases = case_pattern.findall(row_str)
+            dates = date_pattern.findall(row_str)
+            zips = zip_pattern.findall(row_str)
+            quads = quad_pattern.findall(row_str)
+
+            if cases and len(cases) == len(dates):
+                # --- LOGIC FOR ROWS WITH CASE NUMBERS (EXISTING LOGIC) ---
+                address_block = row_str
+                for item in cases + dates + zips + quads:
+                    address_block = address_block.replace(item, '')
+                address_block = re.sub(r'\bnan\b', '', address_block, flags=re.IGNORECASE).strip()
+                addresses = re.split(r'\s+(?=\d{3,})', address_block)
+
+                if len(cases) == len(addresses):
+                    for i in range(len(cases)):
+                        all_cleaned_rows.append([cases[i], addresses[i].strip(" ,-"), quads[i] if i < len(quads) else '', zips[i] if i < len(zips) else '', dates[i]])
+                else:
+                    all_cleaned_rows.append([cases[0], address_block, quads[0] if quads else '', zips[0] if zips else '', dates[0]])
+            
+            # --- NEW LOGIC TO CAPTURE ROWS WITHOUT CASE NUMBERS ---
+            elif not cases and dates:
+                case_number = '' # Assign a blank case number
+                eviction_date = dates[0]
+                zipcode = zips[0] if zips else ''
+                quad = quads[0] if quads else ''
+
+                # Isolate address by removing other found data
+                address = row_str.replace(eviction_date, '')
+                if zipcode: address = address.replace(zipcode, '')
+                address = re.sub(r'\bnan\b', '', address, flags=re.IGNORECASE).strip(" ,-")
+                
+                if len(address) > 5: # Make sure we have a real address
+                    all_cleaned_rows.append([case_number, address, quad, zipcode, eviction_date])
+            
+            # --- Rows that are still skipped are truly junk ---
+            else:
+                total_skipped_with_data += 1
+                skipped_with_data.append({'text': row_str[:100]})
+
+    return pd.DataFrame(all_cleaned_rows, columns=['Case Number', 'Defendant Address', 'Quad', 'Zipcode', 'Eviction Date'])
+
+# Process PDFs
 for pdf_filename in os.listdir(pdf_directory):
-   pdf_tables = tabula.read_pdf(
-       os.path.join(pdf_directory, pdf_filename),
-       pages='all',
-       multiple_tables=True,
-       lattice=True, 
-       guess=False,  
-       stream=True   
-   )
-   if pdf_tables:  # Check if tables exist in the PDF
-       # Function to properly split address and zipcode
-       def clean_address_data(df):
-           # Convert all values to string and join
-           text_data = df.astype(str).apply(' '.join, axis=1)
-          
-           print("\n=== Input Data Sample ===")
-           print("First 5 rows of raw input:")
-           print(df.head())
-           print("\nFirst 5 rows after text joining:")
-           print(text_data.head())
+   if not pdf_filename.endswith('.pdf'): continue
+   pdf_path = os.path.join(pdf_directory, pdf_filename)
+   print(f"Processing {pdf_filename}...")
+   pdf_tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True, stream=True)
+   cleaned_table = process_and_split_rows(pdf_tables)
+   if not cleaned_table.empty:
+       cleaned_rows_tuples = [tuple(row) for row in cleaned_table.values]
+       unique_rows.update(cleaned_rows_tuples)
 
+# Create DataFrame from all newly parsed unique rows
+final_df = pd.DataFrame(list(unique_rows), columns=['Case Number', 'Defendant Address', 'Quad', 'Zipcode', 'Eviction Date'])
 
-           cleaned_rows = []
-           skipped_rows = []
-          
-           for text in text_data:
-               try:
-                   # Extract case number
-                   case_match = re.search(r'(?:\d+-[A-Z]+-\d+|\d+-\d+|[A-Z]+-\d+)', text)
-                   case_number = case_match.group() if case_match else ''
-                  
-                   # Extract zipcode
-                   zipcode_match = re.search(r'20\d{3}(?:\.\d+)?', text)
-                   zipcode = zipcode_match.group().split('.')[0] if zipcode_match else ''
-                  
-                   # Extract quadrant
-                   quad_match = re.search(r'\b(NW|NE|SW|SE)\b', text)
-                   quad = quad_match.group() if quad_match else ''
-                  
-                   # Extract date
-                   date_match = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', text)
-                   date = date_match.group() if date_match else ''
-                  
-                   # Extract address
-                   address = text
-                   if case_match:
-                       address = address[case_match.end():].strip()
-                   if zipcode_match:
-                       address = address[:zipcode_match.start()].strip()
-                   if date_match:
-                       address = address[:date_match.start()].strip()
-                  
-                   # Detailed debugging for each skipped row
-                   if not (case_number and address and zipcode and date):
-                       print("\n=== Skipped Row Analysis ===")
-                       print(f"Original text: {text}")
-                       print("Extracted components:")
-                       print(f"- Case Number: {case_number if case_number else 'MISSING'}")
-                       print(f"- Address: {address if address else 'MISSING'}")
-                       print(f"- Quad: {quad if quad else 'MISSING'}")
-                       print(f"- Zipcode: {zipcode if zipcode else 'MISSING'}")
-                       print(f"- Date: {date if date else 'MISSING'}")
-                       print("Regex matches:")
-                       print(f"- Case number match: {case_match.group() if case_match else 'NO MATCH'}")
-                       print(f"- Zipcode match: {zipcode_match.group() if zipcode_match else 'NO MATCH'}")
-                       print(f"- Quad match: {quad_match.group() if quad_match else 'NO MATCH'}")
-                       print(f"- Date match: {date_match.group() if date_match else 'NO MATCH'}")
-                      
-                   if case_number and address and zipcode and date:
-                       if zipcode.startswith('20'):
-                           cleaned_rows.append([case_number, address, quad, zipcode, date])
-                   else:
-                       missing = []
-                       if not case_number: missing.append('case_number')
-                       if not address: missing.append('address')
-                       if not zipcode: missing.append('zipcode')
-                       if not date: missing.append('date')
-                       skipped_rows.append({
-                           'text': text,
-                           'missing': missing
-                       })
-                              
-               except Exception as e:
-                   print(f"\n=== Error Processing Row ===")
-                   print(f"Row text: {text[:100]}...")
-                   print(f"Error: {str(e)}")
-                   continue
-
-
-           print(f"\nSummary:")
-           print(f"Successfully cleaned {len(cleaned_rows)} rows")
-           print(f"Skipped {len(skipped_rows)} rows")
-
-
-           return pd.DataFrame(cleaned_rows, columns=['Case Number', 'Defendant Address', 'Quad', 'Zipcode', 'Eviction Date'])
-                  
-
-
-       for i, table in enumerate(pdf_tables):
-           # Clean the data
-           cleaned_table = clean_address_data(table)
-           # Convert to tuples and add to unique rows
-           cleaned_rows = [tuple(row) for row in cleaned_table.values]
-           unique_rows.update(cleaned_rows)
-
-
-old_data_csv = os.path.join(csv_directory, "evictions_jan_apr.csv")  # Path to the old data CSV file
-#Add rows from old data CSV to unique_rows
-if os.path.exists(old_data_csv):
-   old_data_df = pd.read_csv(old_data_csv)
-   old_data_rows = [tuple(row) for row in old_data_df.values]
-   unique_rows.update(old_data_rows)
-
-
-# Create DataFrame with unique rows and add a header row
-final_df = pd.DataFrame(unique_rows)
-
-
-#Remove columns with all NaN values
-final_df = final_df.dropna(axis=1, how='all')
-
-
-# If there are still columns with no data, remove them
-final_df = final_df.loc[:, final_df.notna().any()]
-
-
-# Drop duplicate rows based on all columns
-final_df = final_df.drop_duplicates()
-
-
-final_df.columns = ['Case Number', 'Defendant Address', 'Quad', 'Zipcode', 'Eviction Date']
-
-
-# Drop empty rows from final_df
-final_df.dropna(inplace=True)
-
-
-## Step 4: Load existing CSV if present, otherwise create a new DataFrame
+## Step 4: Load existing CSV and combine with new data
 csv_path = "eviction_notices.csv"
 if os.path.exists(csv_path):
    existing_df = pd.read_csv(csv_path)
 else:
-   # If the CSV doesn't exist, create a new DataFrame with the same column names as final_df
    existing_df = pd.DataFrame(columns=final_df.columns)
 
-
-# Drop empty rows from existing_df
-existing_df.dropna(inplace=True)
-
-
-# Filter out columns with no data or with names like "Unnamed"
-existing_df = existing_df.loc[:, ~existing_df.columns.str.startswith('Unnamed')].dropna(axis=1, how='all')
+# Combine old and new data into one big dataframe
+combined_df = pd.concat([existing_df, final_df], ignore_index=True)
 
 
-# Check if existing_df is empty
-if not existing_df.empty:
-   # Convert 'Eviction Date' columns to datetime in both DataFrames
-   final_df['Eviction Date'] = pd.to_datetime(final_df['Eviction Date'], errors='coerce').dt.date
-   existing_df['Eviction Date'] = pd.to_datetime(existing_df['Eviction Date'], errors='coerce').dt.date
+# --- FINAL, MULTI-STAGE DEDUPLICATION LOGIC ---
+
+# 1. Standardize and Pre-Clean all data
+combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce')
+combined_df['Case Number'].fillna('', inplace=True)
+combined_df['Defendant Address'].fillna('', inplace=True)
+combined_df['Defendant Address'] = combined_df['Defendant Address'].astype(str).str.strip().str.rstrip(' ,.')
+combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '', regex=False)
+combined_df['Case Number'] = combined_df['Case Number'].astype(str).str.strip()
+combined_df['Normalized Address'] = combined_df['Defendant Address'].apply(normalize_address)
+
+# -- STAGE 1: Perfect the "Verified" Records (those with Case Numbers) --
+verified_df = combined_df[combined_df['Case Number'] != ''].copy()
+# Sort to bring the most complete records (with dates) to the top
+verified_df.sort_values(by=['Case Number', 'Eviction Date'], ascending=[True, False], inplace=True)
+# Drop duplicates, keeping only the best version of each verified record
+verified_df.drop_duplicates(subset=['Case Number'], keep='first', inplace=True)
 
 
-   # Identify entries that could not be converted in final_df
-   invalid_dates_final = final_df[final_df['Eviction Date'].isna()]
-   print("Entries in final_df that could not be converted to datetime:")
-   print(invalid_dates_final[['Case Number', 'Eviction Date']])
+# -- STAGE 2: Filter the "Unverified" Records against the Verified ones --
+unverified_df = combined_df[combined_df['Case Number'] == ''].copy()
+# Use a merge to find any unverified records that are already covered by a verified one
+merged = unverified_df.merge(
+    verified_df[['Normalized Address', 'Eviction Date']],
+    on=['Normalized Address', 'Eviction Date'],
+    how='left',
+    indicator=True
+)
+# Keep only the unverified records that did NOT find a match
+new_unverified_df = merged[merged['_merge'] == 'left_only'].drop(columns='_merge')
 
 
-   # Identify entries that could not be converted in existing_df
-   invalid_dates_existing = existing_df[existing_df['Eviction Date'].isna()]
-   print("Entries in existing_df that could not be converted to datetime:")
-   print(invalid_dates_existing[['Case Number', 'Eviction Date']])
+# -- STAGE 3: Deduplicate the remaining Unverified Records --
+# Sort to bring the most complete records (with dates) to the top
+new_unverified_df.sort_values(by=['Normalized Address', 'Eviction Date'], ascending=[True, False], inplace=True)
+# Drop duplicates within the unverified set
+final_unverified_df = new_unverified_df.drop_duplicates(subset=['Normalized Address'], keep='first')
 
 
-   # Merge final_df with existing_df on the specific columns
-   merged_df = final_df.merge(existing_df[['Case Number', 'Eviction Date']], on=['Case Number', 'Eviction Date'], how='left', indicator=True)
+# -- STAGE 4: Combine the clean sets --
+final_df = pd.concat([verified_df, final_unverified_df], ignore_index=True)
 
 
-   # Filter only the rows that are not present in existing_df
-   new_rows = merged_df[merged_df['_merge'] == 'left_only'].drop(columns='_merge')
+# --- Final Formatting and Save ---
+final_df['City'] = 'Washington, DC'
+final_df['Full Address'] = (
+    final_df['Defendant Address'].astype(str) +
+    final_df['Quad'].apply(lambda x: f', {x}' if x and pd.notna(x) and x != '' and x != 'nan' else '') +
+    ', ' + final_df['City'] +
+    final_df['Zipcode'].apply(lambda x: f', {x}' if x and pd.notna(x) and x != '' and x != 'nan' else '')
+)
+final_df['Eviction Date'] = final_df['Eviction Date'].dt.strftime('%Y-%m-%d').replace('NaT', '')
 
+# Clean up temporary columns and save the final, clean CSV
+final_df.drop(columns=['Normalized Address'], inplace=True)
 
-   # Add only new rows to the existing DataFrame
-   combined_df = pd.concat([existing_df, new_rows], ignore_index=True)
+# Separate deduplication for records without dates
+dateless_records = final_df[final_df['Eviction Date'].isna() | (final_df['Eviction Date'] == '')]
+dated_records = final_df[~(final_df['Eviction Date'].isna() | (final_df['Eviction Date'] == ''))]
 
-   # Ensure all zipcodes are strings and clean
-   combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '')
-
-
-   # Calculate the number of new rows added
-   new_rows_added = new_rows.shape[0]
-  
+if not dateless_records.empty:
+    print(f"Processing {len(dateless_records)} dateless records for deduplication...")
+    
+    # For dateless records, dedupe on case number + normalized address only
+    dateless_records['Normalized Address'] = dateless_records['Defendant Address'].apply(normalize_address)
+    
+    # Sort to prioritize records with case numbers
+    dateless_records.sort_values(by=['Case Number', 'Normalized Address'], 
+                                 ascending=[False, True], inplace=True)
+    
+    # Dedupe: if same address, keep the one with a case number (if any)
+    dateless_deduped = dateless_records.drop_duplicates(
+        subset=['Normalized Address'], 
+        keep='first'  # Keeps first occurrence (prioritized by sort above)
+    )
+    
+    dateless_deduped.drop(columns=['Normalized Address'], inplace=True)
+    print(f"Removed {len(dateless_records) - len(dateless_deduped)} duplicate dateless records")
+    
+    # Combine back with dated records
+    final_df = pd.concat([dated_records, dateless_deduped], ignore_index=True)
 else:
-   # If existing_df is empty, set combined_df to final_df
-   combined_df = final_df.copy()
-
-   # Optionally, print a message or perform any other actions
-   print("No data found in the existing DataFrame. Skipping duplicate identification process.")
+    print("No dateless records found.")
+    
+final_df.to_csv(csv_path, index=False)
 
 
-# Ensure all zipcodes are strings and clean
-combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '')
+def print_final_summary():
+    # We'll use the final DataFrame for the summary
+    global combined_df
+    combined_df = final_df
+    
+    print("\n" + "="*60)
+    print("PROCESSING SUMMARY")
+    print("="*60)
+    print(f"Records successfully saved: {len(combined_df):,}")
+    print(f"Rows with partial data (skipped): {total_skipped_with_data:,}")
+    if skipped_with_data:
+        print(f"\nSKIPPED ROWS WITH DATA ({len(skipped_with_data)} total):")
+        print("-" * 60)
+        for i, row in enumerate(skipped_with_data[:20]):
+            print(f"{i+1:2d}. {row['text']}")
+        if len(skipped_with_data) > 20:
+            print(f"... and {len(skipped_with_data) - 20} more rows")
+    print("\n" + "="*60)
 
-# Convert "Eviction Date" column to datetime type, handling different date formats
-combined_df['Eviction Date'] = pd.to_datetime(combined_df['Eviction Date'], errors='coerce').dt.date
-
-
-# Check for any entries that could not be converted to datetime
-invalid_dates = combined_df[combined_df['Eviction Date'].isna()]['Eviction Date']
-
-
-# Print out the invalid dates
-if not invalid_dates.empty:
-   print("Invalid dates detected:")
-   print(invalid_dates)
-
-
-# Convert the 'Eviction Date' column to string format to exclude time
-combined_df['Eviction Date'] = combined_df['Eviction Date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else '')
-
-
-# Add these debug statements right before the zipcode conversion line:
-print("\nUnique values in Zipcode column:")
-print(combined_df['Zipcode'].unique())
-
-
-print("\nRows with problematic zipcodes:")
-print(combined_df[combined_df['Zipcode'].astype(str).str.contains('[^0-9.-]', na=False)][['Case Number', 'Defendant Address', 'Zipcode']])
-
-
-# Convert zipcode to numeric and validate data
-# Convert zipcodes to strings and pad to 5 digits
-combined_df['Zipcode'] = combined_df['Zipcode'].astype(str).str.replace('.0', '')  # Remove decimal points
-combined_df = combined_df[combined_df['Zipcode'].str.match(r'^200\d{2}$')]  # Valid DC zipcodes
-combined_df = combined_df[combined_df['Case Number'].notna()]  # Must have case number
-combined_df = combined_df[combined_df['Eviction Date'].notna()]  # Must have date
-
-
-# Add a column for the city
-combined_df['City'] = 'Washington, DC'
-
-
-# Create a new column 'full_address' by concatenating the existing columns
-combined_df['Full Address'] = combined_df['Defendant Address'] + ', ' + combined_df['Quad'] + ', ' + combined_df['City'] + ', ' + combined_df['Zipcode']
-
-
-# Assuming final_df is your DataFrame
-combined_df.drop_duplicates(inplace=True)
-
-
-# Save the combined DataFrame to CSV
-try:
-   combined_df.to_csv(csv_path, index=False)
-except Exception as e:
-   print(f"Error saving combined DataFrame to CSV: {e}")
+print_final_summary()
