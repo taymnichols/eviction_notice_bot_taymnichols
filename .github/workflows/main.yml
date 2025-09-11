@@ -3,26 +3,36 @@ name: Run Scraper and Update Location Data
 on:
   push:
     branches:
-      - '*'   # Triggers on all branches
+      - main  # Best practice to run on a specific branch like main
   schedule:
     - cron: "0 23 * * 5"  # Runs every Friday at 6 PM EST (23:00 UTC)
 
 jobs:
-  scheduled:
+  build-and-commit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11' # Using a specific version is recommended
 
-      - name: Install dependencies
-        run: pip install requests bs4 tabula-py pandas slack-sdk aiohttp
+      # New step to install the Tesseract OCR engine required by pytesseract
+      - name: Install Tesseract OCR
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+      
+      # Updated dependencies to match your new scripts
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pdfplumber pandas pytesseract Pillow tqdm
 
-      - name: Run scraper
+      - name: Run Scraper
+        # This should be your new hybrid script (pdfplumber + OCR)
         run: python scrape.py
 
       - name: Check if CSV was updated
@@ -30,16 +40,17 @@ jobs:
         run: |
           if git diff --name-only | grep -q "eviction_notices.csv"; then
             echo "csv_updated=true" >> $GITHUB_OUTPUT
-            echo "CSV file was updated, will run add_ward.py"
+            echo "CSV file was updated, will run geocoder."
           else
             echo "csv_updated=false" >> $GITHUB_OUTPUT
-            echo "No changes detected in CSV file, skipping add_ward.py"
+            echo "No changes detected in CSV file, skipping geocoder."
           fi
 
-      - name: Run address geocoding
+      - name: Run Address Geocoding
         id: geocoding
         if: steps.check_files.outputs.csv_updated == 'true'
         run: |
+          # This should be your geocoding script
           python add_ward.py
           if [ $? -eq 0 ] && [ -f "eviction_data_ward.csv" ]; then
             echo "geocoding_complete=true" >> $GITHUB_OUTPUT
@@ -47,20 +58,20 @@ jobs:
             echo "geocoding_complete=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Commit and push all changes
-        run: |-
-          git config --global user.name "eviction_notice_bot"
+      - name: Commit and push changes
+        if: steps.check_files.outputs.csv_updated == 'true' # Only run this step if there are changes
+        run: |
+          git config --global user.name "eviction-bot"
           git config --global user.email "actions@users.noreply.github.com"
-          git pull
+          git pull --before # Fetch remote changes before adding local ones
           git add -A
           timestamp=$(date -u)
-          if [ "${{ steps.check_files.outputs.csv_updated }}" == "true" ]; then
-            if [ "${{ steps.geocoding.outputs.geocoding_complete }}" == "true" ]; then
-              git commit -m "✅ New eviction data found and geocoded successfully: ${timestamp}" || exit 0
-            else
-              git commit -m "⚠️ New eviction data found but geocoding incomplete: ${timestamp}" || exit 0
-            fi
+          
+          # Logic for creating the right commit message
+          if [ "${{ steps.geocoding.outputs.geocoding_complete }}" == "true" ]; then
+            git commit -m "✅ New eviction data found and geocoded successfully: ${timestamp}"
           else
-            git commit -m "No new eviction data found: ${timestamp}" || exit 0
+            git commit -m "⚠️ New eviction data found but geocoding incomplete: ${timestamp}"
           fi
+          
           git push
