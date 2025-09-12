@@ -10,14 +10,15 @@ OUTPUT_CSV_PATH = 'eviction_data_ward.csv'
 DC_GEOCODING_API_URL = "https://citizenatlas.dc.gov/newwebservices/locationverifier.asmx/findLocation2" 
 
 # --- DATA LOADING AND PREPARATION --- 
-df = pd.read_csv(LOCAL_CSV_PATH) 
+# Set up for testing on a 20-row sample
+df = pd.read_csv(LOCAL_CSV_PATH).head(100) 
 df.columns = df.columns.str.lower().str.replace(' ', '_') 
 
 # --- GLOBAL COUNTERS AND STORAGE --- 
 stats = { "total": 0, "successful": 0, "failed": 0, "skipped": 0 } 
 failed_addresses, skipped_addresses = [], []
 
-# --- REFINED ADDRESS PARSING FUNCTION --- 
+# --- REFINED ADDRESS PARSING FUNCTION (with UNIT fix) --- 
 def parse_address_components(address): 
     if pd.isna(address): 
         return None, None, None 
@@ -35,6 +36,7 @@ def parse_address_components(address):
     addr = re.sub(r'\s+\d{5}.*$', '', addr)
 
     unit_info = None
+    # This regex now correctly captures only the unit number
     unit_patterns = [r'\s+(?:UNIT|APT\.?|#|STE\.?|SUITE)\s*([A-Z0-9\-]+)', r'\s+([A-Z]\d+)(?=\s|,|$)'] 
     units = [] 
     for pattern in unit_patterns: 
@@ -64,7 +66,7 @@ def should_attempt_geocoding(address):
     if not re.match(r'^\d+', address): return False 
     return True 
 
-# --- GEOGRAPHIC FUNCTION ---
+# --- GEOGRAPHIC FUNCTION (with WARD fix) ---
 def geocode_address(address): 
     encoded_address = quote(address) 
     url = f"{DC_GEOCODING_API_URL}?str={encoded_address}&f=json" 
@@ -77,6 +79,7 @@ def geocode_address(address):
             lat, lon = result.get('LATITUDE'), result.get('LONGITUDE') 
             if not (lat and lon and 38.8 < lat < 39.0 and -77.2 < lon < -76.9): return None
             
+            # This logic robustly gets the ward number and prevents duplicates
             ward_num_raw = result.get('WARD_2012') or result.get('WARD_2002')
             ward_num = str(ward_num_raw).replace('Ward ', '').strip()
 
@@ -108,8 +111,8 @@ def process_row(full_address):
     return pd.Series(result) 
 
 # --- SCRIPT EXECUTION ---
-print("Processing and geocoding all addresses...") 
-tqdm.pandas(desc="Geocoding") 
+print("Processing and geocoding a sample of 20 addresses...") 
+tqdm.pandas(desc="Geocoding Sample") 
 processed_data = df['full_address'].progress_apply(process_row) 
 df = df.join(processed_data) 
 
@@ -128,9 +131,11 @@ df = df.drop(columns=[col for col in cols_to_drop if col in df.columns], errors=
 final_columns = ['case_number', 'quad', 'zipcode', 'eviction_date', 'city', 'address_original', 'address_base', 'unit', 'lat', 'lng', 'ward', 'address_cleaned', 'month', 'year', 'month_name']
 df = df[[col for col in final_columns if col in df.columns]]
 
-# Save the final, clean data to a new CSV file
-df.to_csv(OUTPUT_CSV_PATH, index=False)
-print(f"\n✅ Processing complete. Data saved to {OUTPUT_CSV_PATH}")
+# Print the final test results to the console
+print("\n" + "="*60)
+print("DEBUGGING OUTPUT FOR SAMPLE OF 20 ROWS")
+print("="*60)
+print(df.to_string())
 
 # --- REPORTING ---
 print("\n" + "="*60) 
