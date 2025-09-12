@@ -4,360 +4,220 @@ import requests
 import re
 from tqdm import tqdm
 
+# --- CONFIGURATION ---
+LOCAL_CSV_PATH = 'eviction_notices.csv'
+OUTPUT_CSV_PATH = 'eviction_data_geocoded.csv'
+DC_GEOCODING_API_URL = "https://citizenatlas.dc.gov/newwebservices/locationverifier.asmx/findLocation2"
 
-# Path to the local CSV file
-local_csv_path = 'eviction_notices.csv'
-
-
-# Read the CSV file into a DataFrame
-df = pd.read_csv(local_csv_path)
-
-
-# Convert all column names to lowercase and replace spaces with underscores
+# --- DATA LOADING AND PREPARATION ---
+df = pd.read_csv(LOCAL_CSV_PATH)
 df.columns = df.columns.str.lower().str.replace(' ', '_')
 
+# --- GLOBAL COUNTERS AND STORAGE ---
+# Using a dictionary is a slightly cleaner way to manage global state
+stats = {
+    "total": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0
+}
+failed_addresses = []
+skipped_addresses = []
 
-# Initialize counters
-total_addresses = 0
-failed_geocoding = 0
-successful_geocoding = 0
-failed_addresses = []  # Store failed addresses for reporting
-skipped_addresses = []  # Store addresses we skip for quality reasons
-
+# --- ADDRESS PARSING AND CLEANING FUNCTIONS ---
 
 def parse_address_components(address):
-    """Parse address into original, cleaned full, base address, and unit components"""
+    """Parse address into original, base address, and unit components."""
     if pd.isna(address):
-        return address, None, None, None, "missing_address"
-   
+        return address, None, None
+
     original_address = str(address).strip()
-    address = original_address
-    quality_flag = "clean"  # Track data quality issues
-   
-    # Check for obvious data quality issues (but don't filter out)
-    if re.search(r'\bnan\b|VACANT\s+LOT', address, re.IGNORECASE):
-        quality_flag = "poor_quality"
-    
+    # Create a working copy for modifications
+    addr = original_address.upper() # Standardize to uppercase for reliable matching
+
     # Fix common typos
     typo_fixes = {
-        'STEREET': 'STREET',
-        'PLEASNT': 'PLEASANT',
-        'BRENTOOWD': 'BRENTWOOD',
-        'IRVINING': 'IRVINGTON',
-        '21STSTREET': '21ST STREET',
-        'CONNETICUT': 'CONNECTICUT',
-        'MCARUTHUR': 'MACARTHUR',
-        'HAWTHRO': 'HAWTHORNE',
-        'AVE.': 'AVENUE',  # Handle "MARTIN LUTHER KING JR AVE."
+        'STEREET': 'STREET', 'PLEASNT': 'PLEASANT', 'AVE.': 'AVENUE',
+        'CONNETICUT': 'CONNECTICUT', 'MCARUTHUR': 'MACARTHUR'
     }
-   
     for typo, fix in typo_fixes.items():
-        address = address.replace(typo, fix)
-   
-    # Enhanced street suffix standardization
+        addr = addr.replace(typo, fix)
+
+    # Standardize street suffixes
     street_suffixes = {
-        'STREET': 'ST', 'AVENUE': 'AVE', 'BOULEVARD': 'BLVD', 
-        'CIRCLE': 'CIR', 'COURT': 'CT', 'DRIVE': 'DR',
-        'LANE': 'LN', 'ROAD': 'RD', 'PLACE': 'PL', 
-        'TERRACE': 'TER', 'HIGHWAY': 'HWY', 'PARKWAY': 'PKWY',
-        'WAY': 'WY'
+        'STREET': 'ST', 'AVENUE': 'AVE', 'BOULEVARD': 'BLVD', 'CIRCLE': 'CIR',
+        'COURT': 'CT', 'DRIVE': 'DR', 'LANE': 'LN', 'ROAD': 'RD',
+        'PLACE': 'PL', 'TERRACE': 'TER', 'SQUARE': 'SQ'
     }
-    
-    for full_suffix, abbrev in street_suffixes.items():
-        address = re.sub(rf'\b{full_suffix}\b', abbrev, address, flags=re.IGNORECASE)
-   
-    # Remove corrupted patterns specific to your data
-    # Pattern like "SE 20019 8/" or "SE 20020 8/"
-    address = re.sub(r'\s+(NE|NW|SE|SW)\s+\d{5}\s+\d+/', '', address)
-    address = re.sub(r'\s+\d{1,2}/$', '', address)
-    address = re.sub(r'\s+\d{1,2}/\d{1,2}/$', '', address)
-    address = re.sub(r'\s+\d{1,2}/\d{1,2}/\d{2,4}.*$', '', address)
-   
-    # Remove other corrupted data patterns
-    address = re.sub(r'[A-Z]{2,}[0-9)]+$', '', address)
-    address = re.sub(r'\s+\([^)]*BASEMEN[^)]*\)', '', address, flags=re.IGNORECASE)
-    address = re.sub(r'^-[A-Z]\s+', '', address)
-   
-    # Clean up spaces
-    address = re.sub(r'\s+', ' ', address).strip()
-    cleaned_full_address = address
-   
-    # Enhanced unit information extraction
+    for full, abbrev in street_suffixes.items():
+        addr = re.sub(rf'\b{full}\b', abbrev, addr)
+
+    # Remove corrupted data patterns (e.g., trailing quad/zip/date fragments)
+    addr = re.sub(r'\s+(NE|NW|SE|SW)\s+\d{5}.*$', '', addr)
+    addr = re.sub(r'\s+\d{1,2}/\d{1,2}/\d{2,4}.*$', '', addr)
+
+    # Extract unit information
     unit_patterns = [
-        r',\s*(#[A-Z0-9\-]+)',  # Handle ", #225" pattern
-        r'\s+(#[A-Z0-9\-]+)',   # Handle " #1025" pattern
-        r'\s+(UNIT\s+[A-Z0-9\-#]+)',  # Handle "UNIT 102" or "UNIT #307"
-        r'\s+(SUITE[S]?\s+[A-Z0-9\-\s]+)',
-        r'\s+(APT\.?\s+[A-Z0-9\-]+)',
-        r'\s+(APARTMENT\s+[A-Z0-9\-]+)',  # Added from R code
-        r'\s+(STE\.?\s+[A-Z0-9\-]+)',    # Added from R code
-        r'\s+([A-Z]\d+)',  # T1, D2 patterns from R code
-        r'\s+\(([^)]*#[A-Z0-9\-]+)\)',  # (D#202) patterns from R code
-        r'\s+(BASEMENT\s+AND\s+FIRST\s+FLOOR)',
-        r'\s+(LOWER\s+LEVEL\s+AND\s+MEZZANINE\s+LEVEL)',
-        r'\s+(\(MAIN\s+UNIT.*?\))',
-        r'\s+(AND\s+PARKING\s+UNIT\s+[A-Z0-9\-]+)',
+        r'\s+(UNIT|APT\.?|#|STE\.?|SUITE)\s*([A-Z0-9\-]+)',
+        r'\s+([A-Z]\d+)(?=\s|,|$)', # e.g., T1, D2
     ]
-   
-    base_address = address
     units = []
-   
     for pattern in unit_patterns:
-        matches = re.findall(pattern, address, flags=re.IGNORECASE)
-        if matches:
-            for match in matches:
-                units.append(match.strip().lstrip(',').strip())  # Remove leading comma
-            base_address = re.sub(pattern, '', base_address, flags=re.IGNORECASE)
-   
-    unit_info = '; '.join(units) if units else None
-   
-    # Handle multiple addresses - take the first one with a house number
-    if ' AND ' in base_address and re.search(r'\d+\s+\w+.*?\s+AND\s+\d+\s+\w+', base_address):
-        parts = base_address.split(' AND ')
-        for part in parts:
-            if re.match(r'^\d+\s+', part.strip()):
-                base_address = part.strip()
-                break
-   
-    # Handle address ranges - use the first number
-    base_address = re.sub(r'^(\d+)-\d+\s+', r'\1 ', base_address)
-   
-    # Fix obvious street number errors (5+ digits that should be 4 or fewer)
-    if re.match(r'^[1-9]\d{4,}\s+', base_address):
-        match = re.match(r'^(\d)(\d{3,4})\s+(.+)', base_address)
-        if match:
-            base_address = match.group(2) + ' ' + match.group(3)
-   
-    # Handle specific OCR errors
-    base_address = re.sub(r'^41110\s+', '4110 ', base_address)
-   
-    # Clean up trailing commas and spaces
-    base_address = re.sub(r',\s*$', '', base_address)
-    base_address = re.sub(r'\s+', ' ', base_address).strip()
-    base_address = re.sub(r',\s*,', ',', base_address)
-   
-    # Flag addresses without house numbers but DON'T set to None (preserve data)
-    if not re.match(r'^\d+', base_address):
-        quality_flag = "no_house_number"
-   
-    return original_address, cleaned_full_address, base_address, unit_info, quality_flag
+        matches = re.findall(pattern, addr)
+        for match in matches:
+            # Handle cases where pattern captures multiple groups (e.g., ('APT', '101'))
+            unit_str = "".join(match).strip()
+            if unit_str not in units:
+                units.append(unit_str)
+        addr = re.sub(pattern, '', addr)
 
+    unit_info = f"#{units[0]}" if units else None
 
-def should_attempt_geocoding(address, quality_flag):
-    """Determine if we should attempt geocoding (be very permissive)"""
-    if not address:
+    # Clean up base address
+    base_addr = re.sub(r',\s*$', '', addr).strip() # Remove trailing commas
+    base_addr = re.sub(r'\s+', ' ', base_addr) # Consolidate whitespace
+
+    # Handle address ranges by taking the first number
+    base_addr = re.sub(r'^(\d+)-\d+\s', r'\1 ', base_addr)
+    
+    # Ensure quadrant is at the end
+    quad_match = re.search(r'\b(NE|NW|SE|SW)\b', base_addr)
+    if quad_match:
+        quad = quad_match.group(1)
+        base_addr = re.sub(r'\s*\b(NE|NW|SE|SW)\b\s*', ' ', base_addr).strip()
+        base_addr = f"{base_addr} {quad}"
+        
+    return original_address, base_addr, unit_info
+
+def should_attempt_geocoding(address):
+    """Determine if an address is high-enough quality to send to the API."""
+    if not address or pd.isna(address):
         return False
-    # Only skip if completely unusable
-    if quality_flag == "missing_address":
+    if re.search(r'VACANT\s+LOT', address, re.IGNORECASE):
         return False
-    # Try to geocode even poor quality addresses - let the API decide
+    if not re.match(r'^\d+', address): # Must start with a house number
+        return False
     return True
 
+# --- GEOGRAPHIC FUNCTIONS ---
 
 def geocode_address(address):
-    """Geocode a single address using DC's API"""
-    if not address:
-        return None, None, None, None, None
-       
-    # Try variations: original, without city/state info
-    variations = [address]
-   
-    # Remove Washington, DC references
-    no_city = re.sub(r',\s*Washington,?\s*DC,?\s*\d{5}?', '', address)
-    no_city = re.sub(r',\s*Washington,?\s*DC', '', no_city).strip()
-    if no_city != address and no_city:
-        variations.append(no_city)
-   
-    for addr_variation in variations:
-        encoded_address = quote(addr_variation)
-        url = f"https://citizenatlas.dc.gov/newwebservices/locationverifier.asmx/findLocation2?str={encoded_address}&f=json"
-       
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('returnDataset') and data['returnDataset'].get('Table1'):
-                    result = data['returnDataset']['Table1'][0]
-                    lat = result['LATITUDE']
-                    lon = result['LONGITUDE']
-                    ward_2002 = result.get('WARD_2002')
-                    ward_2012 = result.get('WARD_2012')
-                    ward = ward_2002 if ward_2002 else ward_2012
-                    zipcode = result.get('ZIPCODE')
-                    quad = result.get('QUADRANT')
-                   
-                    return lat, lon, ward, zipcode, quad
-        except requests.exceptions.RequestException:
-            continue
-   
-    return None, None, None, None, None
-
-
-def validate_coordinates(lat, lon):
-    """Validate that coordinates are within reasonable DC bounds"""
-    if lat is None or lon is None:
-        return False, "missing_coordinates"
+    """Geocode a single address using DC's API, returning key location fields."""
+    encoded_address = quote(address)
+    url = f"{DC_GEOCODING_API_URL}?str={encoded_address}&f=json"
     
-    # DC bounds (approximate)
-    if lat < 38.8 or lat > 39.0 or lon < -77.2 or lon > -76.9:
-        return False, "outside_dc_bounds"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        data = response.json()
+        
+        if data.get('returnDataset') and data['returnDataset'].get('Table1'):
+            result = data['returnDataset']['Table1'][0]
+            # Validate coordinates are within DC bounds
+            lat, lon = result.get('LATITUDE'), result.get('LONGITUDE')
+            if not (38.8 < lat < 39.0 and -77.2 < lon < -76.9):
+                return None # Coordinates are outside DC, likely a geocoding error
+            
+            return {
+                "lat": lat,
+                "lng": lon,
+                "ward": result.get('WARD_2012') or result.get('WARD_2002'),
+                "zipcode_api": result.get('ZIPCODE'),
+                "quad_api": result.get('QUADRANT')
+            }
+    except (requests.exceptions.RequestException, ValueError): # Catches network errors & JSON decoding errors
+        return None
+    return None
+
+# --- MAIN PROCESSING LOGIC ---
+
+def process_row(full_address):
+    """Takes a raw address, processes it, and returns a dictionary of new data."""
+    stats['total'] += 1
+    original, base_addr, unit = parse_address_components(full_address)
     
-    return True, "valid"
-
-
-def process_address(address):
-    """Process a single address: parse components and geocode"""
-    global total_addresses, failed_geocoding, successful_geocoding, failed_addresses, skipped_addresses
-    total_addresses += 1
-   
-    # Parse address components
-    original, cleaned_full, base_addr, unit, quality_flag = parse_address_components(address)
-   
-    # Initialize geocoding results
-    lat, lon, ward, zipcode_api, quad_api = None, None, None, None, None
-    geocoding_attempted = False
-    coordinate_quality = "not_attempted"
-   
-    # Decide whether to attempt geocoding
-    if should_attempt_geocoding(base_addr, quality_flag):
-        geocoding_attempted = True
-        lat, lon, ward, zipcode_api, quad_api = geocode_address(base_addr)
-        
-        # Validate coordinates
-        coords_valid, coord_quality_flag = validate_coordinates(lat, lon)
-        coordinate_quality = coord_quality_flag
-        
-        if coords_valid and lat is not None:
-            successful_geocoding += 1
+    result = {
+        'address_original': original,
+        'address_base': base_addr,
+        'unit': unit,
+        'lat': None, 'lng': None, 'ward': None, 'zipcode_api': None, 'quad_api': None
+    }
+    
+    if should_attempt_geocoding(base_addr):
+        geo_data = geocode_address(base_addr)
+        if geo_data:
+            stats['successful'] += 1
+            result.update(geo_data)
         else:
-            failed_geocoding += 1
-            failed_addresses.append({
-                'original': original,
-                'cleaned_full': cleaned_full,
-                'base_address': base_addr,
-                'unit': unit,
-                'quality_flag': quality_flag,
-                'coordinate_quality': coordinate_quality,
-                'geocoding_attempted': geocoding_attempted
-            })
+            stats['failed'] += 1
+            failed_addresses.append({'original': original, 'base': base_addr})
     else:
-        skipped_addresses.append({
-            'original': original,
-            'cleaned_full': cleaned_full,
-            'base_address': base_addr,
-            'unit': unit,
-            'quality_flag': quality_flag,
-            'reason': 'poor_address_quality'
-        })
-   
-    return original, cleaned_full, base_addr, unit, lat, lon, ward, zipcode_api, quad_api, quality_flag, coordinate_quality, geocoding_attempted
+        stats['skipped'] += 1
+        skipped_addresses.append({'original': original, 'base': base_addr})
+        
+    return pd.Series(result)
 
 
-# Process all addresses with progress bar
-print("Processing addresses...")
-tqdm.pandas(desc="Geocoding addresses")
-results = df['full_address'].progress_apply(lambda x: pd.Series(process_address(x)))
+# --- SCRIPT EXECUTION ---
 
+print("Processing and geocoding addresses...")
+tqdm.pandas(desc="Geocoding")
+# Apply the processing function to the 'full_address' column
+geocoded_data = df['full_address'].progress_apply(process_row)
 
-# Assign results to new columns
-df['address_original'] = results[0]
-df['address_cleaned'] = results[1]
-df['address_base'] = results[2]
-df['unit'] = results[3]
-df['lat'] = results[4]
-df['lng'] = results[5]
-df['ward'] = results[6]
-df['zipcode_api'] = results[7]
-df['quad_api'] = results[8]
-df['address_quality_flag'] = results[9]
-df['coordinate_quality_flag'] = results[10]
-df['geocoding_attempted'] = results[11]
+# Join the new data back to the original DataFrame
+df = df.join(geocoded_data)
 
-
-# Fill in missing zipcode and quad with API data, preserving existing data
+# Combine original data with new API data (API data fills missing values)
 df['zipcode'] = df['zipcode'].fillna(df['zipcode_api'])
 df['quad'] = df['quad'].fillna(df['quad_api'])
 
+# Create the final, clean, formatted address column
+def create_final_cleaned_address(row):
+    if pd.isna(row['address_base']):
+        return None
+    parts = [row['address_base']]
+    if pd.notna(row['unit']):
+        parts.append(row['unit'])
+    address = " ".join(parts)
+    
+    zip_str = ""
+    if pd.notna(row['zipcode']):
+        zip_str = f", {str(int(row['zipcode']))}"
+        
+    return f"{address}, Washington, DC{zip_str}"
 
-# Clean up temporary columns
-df = df.drop(columns=['zipcode_api', 'quad_api'])
+df['address_cleaned'] = df.apply(create_final_cleaned_address, axis=1)
 
-
-# Convert 'eviction_date' to datetime format and add month and year columns
+# Date processing
 df['eviction_date'] = pd.to_datetime(df['eviction_date'])
 df['month'] = df['eviction_date'].dt.month
 df['year'] = df['eviction_date'].dt.year
-df['month_name'] = df['eviction_date'].dt.strftime('%B')
 
+# Final cleanup of columns
+cols_to_drop = ['full_address', 'defendant_address', 'zipcode_api', 'quad_api']
+df = df.drop(columns=[col for col in cols_to_drop if col in df.columns], errors='ignore')
 
-# Remove redundant columns
-columns_to_drop = []
-if 'defendant_address' in df.columns:
-    columns_to_drop.append('defendant_address')
-if 'full_address' in df.columns and 'address_cleaned' in df.columns:
-    columns_to_drop.append('full_address')
+# Save the result
+df.to_csv(OUTPUT_CSV_PATH, index=False)
+print(f"\n✅ Processing complete. Data saved to {OUTPUT_CSV_PATH}")
 
-
-if columns_to_drop:
-    df = df.drop(columns=columns_to_drop)
-    print(f"Removed redundant columns: {columns_to_drop}")
-
-
-# Save the updated DataFrame
-df.to_csv('eviction_data_ward.csv', index=False)
-
-
-# Print detailed summary report
+# --- REPORTING ---
 print("\n" + "="*60)
 print("PROCESSING SUMMARY REPORT")
 print("="*60)
-print(f"Total addresses processed: {total_addresses:,}")
-print(f"Geocoding attempted: {total_addresses - len(skipped_addresses):,}")
-print(f"Geocoding skipped: {len(skipped_addresses):,}")
-print(f"Successfully geocoded: {successful_geocoding:,}")
-print(f"Failed to geocode: {failed_geocoding:,}")
-if total_addresses - len(skipped_addresses) > 0:
-    print(f"Success rate (of attempted): {(successful_geocoding/(total_addresses - len(skipped_addresses)))*100:.1f}%")
-print(f"Overall success rate: {(successful_geocoding/total_addresses)*100:.1f}%")
+print(f"Total addresses processed: {stats['total']:,}")
+print(f"Geocoding attempted:     {stats['total'] - stats['skipped']:,}")
+print(f"  - Successfully geocoded: {stats['successful']:,}")
+print(f"  - Failed to geocode:     {stats['failed']:,}")
+print(f"Geocoding skipped:         {stats['skipped']:,} (poor address quality)")
 
+if (stats['total'] - stats['skipped']) > 0:
+    success_rate = (stats['successful'] / (stats['total'] - stats['skipped'])) * 100
+    print(f"\nSuccess Rate (of attempted): {success_rate:.1f}%")
 
-# Show failed geocoding details
 if failed_addresses:
-    print(f"\nFAILED GEOCODING DETAILS ({len(failed_addresses)} addresses):")
-    print("-" * 60)
-    for i, failed in enumerate(failed_addresses[:20], 1):  # Show first 20
-        print(f"{i:2d}. Original: {failed['original']}")
-        print(f"    Base:     {failed['base_address']}")
-        if failed['unit']:
-            print(f"    Unit:     {failed['unit']}")
-        print()
-   
-    if len(failed_addresses) > 20:
-        print(f"... and {len(failed_addresses) - 20} more failed addresses")
-
-
-# Show data coverage summary
-total_rows = len(df)
-geocoded_rows = len(df[df['lat'].notna()])
-existing_quad = len(df[df['quad'].notna()])
-existing_zip = len(df[df['zipcode'].notna()])
-
-
-print(f"\nDATA COVERAGE SUMMARY:")
-print("-" * 30)
-print(f"Total records: {total_rows:,}")
-print(f"Records with coordinates: {geocoded_rows:,} ({(geocoded_rows/total_rows)*100:.1f}%)")
-print(f"Records with quad data: {existing_quad:,} ({(existing_quad/total_rows)*100:.1f}%)")
-print(f"Records with zipcode data: {existing_zip:,} ({(existing_zip/total_rows)*100:.1f}%)")
-
-
-print(f"\nFinal DataFrame Structure:")
-print(f"  • address_original: Raw address from source data")
-print(f"  • address_cleaned: Address with typos fixed")
-print(f"  • address_base: Base address without unit info (used for geocoding)")
-print(f"  • unit: Extracted unit/suite/apartment information")
-print(f"  • lat/lng: Coordinates from geocoding")
-print(f"  • ward: DC ward from geocoding")
-print(f"  • zipcode: Existing zipcode filled with API data where missing")
-print(f"  • quad: Existing quad filled with API data where missing")
+    print(f"\n--- Top 10 Failed Addresses ---")
+    for i, failed in enumerate(failed_addresses[:10]):
+        print(f"{i+1:2d}. Base: {failed['base']} (Original: {failed['original']})")
 print("="*60)
