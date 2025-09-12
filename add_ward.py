@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 # --- CONFIGURATION --- 
 LOCAL_CSV_PATH = 'eviction_notices.csv' 
-OUTPUT_CSV_PATH = 'eviction_data_ward.csv' # Changed to match what the app expects
+OUTPUT_CSV_PATH = 'eviction_data_ward.csv'
 DC_GEOCODING_API_URL = "https://citizenatlas.dc.gov/newwebservices/locationverifier.asmx/findLocation2" 
 
 # --- DATA LOADING AND PREPARATION --- 
@@ -24,7 +24,6 @@ failed_addresses = []
 skipped_addresses = [] 
 
 # --- ADDRESS PARSING AND CLEANING FUNCTIONS --- 
-# (This is your original, trusted function)
 def parse_address_components(address): 
     if pd.isna(address): 
         return address, None, None 
@@ -43,8 +42,11 @@ def parse_address_components(address):
     } 
     for full, abbrev in street_suffixes.items(): 
         addr = re.sub(rf'\b{full}\b', abbrev, addr) 
+    
+    addr = re.sub(r'\s+\d+/\s*$', '', addr).strip()
     addr = re.sub(r'\s+(NE|NW|SE|SW)\s+\d{5}.*$', '', addr) 
     addr = re.sub(r'\s+\d{1,2}/\d{1,2}/\d{2,4}.*$', '', addr) 
+    
     unit_patterns = [ 
         r'\s+(UNIT|APT\.?|#|STE\.?|SUITE)\s*([A-Z0-9\-]+)', 
         r'\s+([A-Z]\d+)(?=\s|,|$)',
@@ -78,7 +80,6 @@ def should_attempt_geocoding(address):
     return True 
 
 # --- GEOGRAPHIC FUNCTIONS --- 
-# (This is your original, trusted function)
 def geocode_address(address): 
     encoded_address = quote(address) 
     url = f"{DC_GEOCODING_API_URL}?str={encoded_address}&f=json" 
@@ -103,12 +104,11 @@ def geocode_address(address):
     return None 
 
 # --- MAIN PROCESSING LOGIC --- 
-# (This is your original, trusted function)
 def process_row(full_address): 
     stats['total'] += 1 
     original, base_addr, unit = parse_address_components(full_address) 
+    # **FIX**: Removed 'address_original' from here to prevent duplication
     result = { 
-        'address_original': original, 
         'address_base': base_addr, 
         'unit': unit, 
         'lat': None, 'lng': None, 'ward': None, 'zipcode_api': None, 'quad_api': None 
@@ -138,18 +138,14 @@ df = df.join(geocoded_data)
 df['zipcode'] = df['zipcode'].fillna(df['zipcode_api']) 
 df['quad'] = df['quad'].fillna(df['quad_api']) 
 
-# --- CHANGE 1: Fix the ZIP Codes ---
 df['zipcode'] = pd.to_numeric(df['zipcode'], errors='coerce').dropna().astype(int).astype(str)
 
-# --- CHANGE 2: Fix the 'address_cleaned' Column ---
 def create_final_cleaned_address(row): 
     if pd.isna(row['address_base']): 
         return None 
-    # Use the base_addr which already has the quadrant at the end
     parts = [row['address_base']] 
     if pd.notna(row['unit']): 
         parts.append(row['unit']) 
-    # This now returns the address without city and zip
     return " ".join(parts)
 
 df['address_cleaned'] = df.apply(create_final_cleaned_address, axis=1) 
@@ -158,12 +154,9 @@ df['address_cleaned'] = df.apply(create_final_cleaned_address, axis=1)
 df['eviction_date'] = pd.to_datetime(df['eviction_date'], errors='coerce') 
 df['month'] = df['eviction_date'].dt.month 
 df['year'] = df['eviction_date'].dt.year 
-
-# --- CHANGE 3: Add the 'month_name' Column ---
 df['month_name'] = df['eviction_date'].dt.strftime('%B')
 
-# Final cleanup of columns 
-# Rename 'full_address' to 'address_original' for the app
+# **FIX**: Rename 'full_address' to 'address_original' just once at the end
 if 'full_address' in df.columns:
     df = df.rename(columns={'full_address': 'address_original'})
 
@@ -191,5 +184,5 @@ if (stats['total'] - stats['skipped']) > 0:
 if failed_addresses: 
     print(f"\n--- Top 10 Failed Addresses ---") 
     for i, failed in enumerate(failed_addresses[:10]): 
-        print(f"{i+1:2d}. Base: {failed['base']} (Original: {failed['original']})") 
+        print(f"{i+1:2d}. Base: {failed.get('base', 'N/A')} (Original: {failed.get('original', 'N/A')})") 
 print("="*60)
