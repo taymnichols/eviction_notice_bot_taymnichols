@@ -93,7 +93,11 @@ def geocode_address(address):
 def process_row(full_address): 
     stats['total'] += 1 
     original, base_addr, unit = parse_address_components(full_address) 
-    result = {'address_original': original, 'address_base': base_addr, 'unit': unit, 'lat': None, 'lng': None, 'ward': None, 'zipcode_api': None, 'quad_api': None} 
+    
+    # FIX: Removed 'address_original': original from this dictionary
+    # to prevent creating a duplicate column.
+    result = {'address_base': base_addr, 'unit': unit, 'lat': None, 'lng': None, 'ward': None, 'zipcode_api': None, 'quad_api': None} 
+    
     if should_attempt_geocoding(base_addr): 
         geo_data = geocode_address(base_addr) 
         if geo_data: 
@@ -105,8 +109,8 @@ def process_row(full_address):
     else: 
         stats['skipped'] += 1 
         skipped_addresses.append({'original': original, 'base': base_addr}) 
-    return pd.Series(result) 
-
+    return pd.Series(result)
+    
 # --- SCRIPT EXECUTION ---
 print("Processing and geocoding all addresses...") 
 tqdm.pandas(desc="Geocoding") 
