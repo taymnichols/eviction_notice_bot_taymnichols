@@ -121,7 +121,7 @@ df['zipcode'] = df['zipcode'].fillna(df['zipcode_api'])
 df['quad'] = df['quad'].fillna(df['quad_api']) 
 df['zipcode'] = pd.to_numeric(df['zipcode'], errors='coerce').fillna(0).astype(int).astype(str).replace('0', None)
 df['address_cleaned'] = df.apply(lambda row: f"{row['address_base']} {row['unit']}" if pd.notna(row['unit']) else row['address_base'], axis=1)
-df['eviction_date'] = pd.to_datetime(df['eviction_date'], errors='coerce') 
+df['eviction_date'] = pd.to_datetime(df['eviction_date'], format='%m/%d/%Y', errors='coerce')
 df['month'] = df['eviction_date'].dt.month 
 df['year'] = df['eviction_date'].dt.year 
 df['month_name'] = df['eviction_date'].dt.strftime('%B')
