@@ -3,75 +3,146 @@ name: Run Scraper and Update Location Data
 on:
   push:
     branches:
-      - main  # Best practice to run on a specific branch like main
+      - main
   schedule:
     - cron: "0 23 * * 5"  # Runs every Friday at 6 PM EST (23:00 UTC)
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
   build-and-commit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push changes back to repo
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for better git operations
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Using a specific version is recommended
+          python-version: '3.11'
 
-      # New step to install the Tesseract OCR engine required by pytesseract
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install Tesseract OCR
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr
-      
-      # Updated dependencies to match your new scripts
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+          tesseract --version
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 pdfplumber pandas pytesseract Pillow tqdm
 
+      - name: Create necessary directories
+        run: |
+          mkdir -p pdf_files csv_files
+
       - name: Run Scraper
-        # This should be your new hybrid script (pdfplumber + OCR)
-        run: python scrape.py
+        run: |
+          echo "Starting scraper..."
+          python scrape.py
+          echo "Scraper completed with exit code: $?"
+        continue-on-error: false
 
       - name: Check if CSV was updated
         id: check_files
         run: |
-          if git diff --name-only | grep -q "eviction_notices.csv"; then
+          git add -N eviction_notices.csv  # Add new file to git index if it doesn't exist
+          if git diff --name-only HEAD | grep -q "eviction_notices.csv" || git diff --cached --name-only | grep -q "eviction_notices.csv"; then
             echo "csv_updated=true" >> $GITHUB_OUTPUT
-            echo "CSV file was updated, will run geocoder."
+            echo "✅ CSV file was updated, will run geocoder."
+            
+            # Show some stats about the CSV
+            if [ -f "eviction_notices.csv" ]; then
+              lines=$(wc -l < eviction_notices.csv)
+              echo "📊 CSV contains $lines lines"
+            fi
           else
             echo "csv_updated=false" >> $GITHUB_OUTPUT
-            echo "No changes detected in CSV file, skipping geocoder."
+            echo "ℹ️ No changes detected in CSV file, skipping geocoder."
           fi
 
       - name: Run Address Geocoding
         id: geocoding
         if: steps.check_files.outputs.csv_updated == 'true'
         run: |
-          # This should be your geocoding script
+          echo "Starting geocoding..."
           python add_ward.py
-          if [ $? -eq 0 ] && [ -f "eviction_data_ward.csv" ]; then
+          geocoding_exit_code=$?
+          
+          if [ $geocoding_exit_code -eq 0 ] && [ -f "eviction_data_ward.csv" ]; then
             echo "geocoding_complete=true" >> $GITHUB_OUTPUT
+            echo "✅ Geocoding completed successfully"
+            
+            # Show some stats about the geocoded file
+            lines=$(wc -l < eviction_data_ward.csv)
+            echo "📊 Geocoded CSV contains $lines lines"
           else
             echo "geocoding_complete=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Geocoding failed with exit code: $geocoding_exit_code"
           fi
 
       - name: Commit and push changes
-        if: steps.check_files.outputs.csv_updated == 'true' # Only run this step if there are changes
+        if: steps.check_files.outputs.csv_updated == 'true'
         run: |
           git config --global user.name "eviction-bot"
           git config --global user.email "actions@users.noreply.github.com"
-          git pull --before # Fetch remote changes before adding local ones
-          git add -A
-          timestamp=$(date -u)
           
-          # Logic for creating the right commit message
-          if [ "${{ steps.geocoding.outputs.geocoding_complete }}" == "true" ]; then
-            git commit -m "✅ New eviction data found and geocoded successfully: ${timestamp}"
-          else
-            git commit -m "⚠️ New eviction data found but geocoding incomplete: ${timestamp}"
+          # Pull latest changes first
+          git pull --rebase origin main || {
+            echo "⚠️ Git pull failed, attempting to resolve..."
+            git pull --no-rebase origin main
+          }
+          
+          # Add all relevant files
+          git add eviction_notices.csv
+          if [ -f "eviction_data_ward.csv" ]; then
+            git add eviction_data_ward.csv
           fi
           
-          git push
+          # Check if there are actually changes to commit
+          if git diff --cached --quiet; then
+            echo "ℹ️ No changes to commit after pull"
+            exit 0
+          fi
+          
+          timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          # Create commit message based on geocoding status
+          if [ "${{ steps.geocoding.outputs.geocoding_complete }}" == "true" ]; then
+            commit_msg="✅ New eviction data found and geocoded successfully: ${timestamp}"
+          else
+            commit_msg="⚠️ New eviction data found but geocoding incomplete: ${timestamp}"
+          fi
+          
+          git commit -m "$commit_msg"
+          git push origin main
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-files
+          path: |
+            *.csv
+            *.log
+            pdf_files/
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- CSV Updated: ${{ steps.check_files.outputs.csv_updated }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Geocoding Complete: ${{ steps.geocoding.outputs.geocoding_complete }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Timestamp: $(date -u)" >> $GITHUB_STEP_SUMMARY
